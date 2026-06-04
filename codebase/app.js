@@ -4,13 +4,33 @@ const USER_ID = "demo_user";
 const categories = {
   Food: { label: "Ăn uống", icon: "🍲", colorClass: "", limit: 2000000 },
   Bills: { label: "Hóa đơn", icon: "▤", colorClass: "teal", limit: 600000 },
-  Transport: { label: "Di chuyển", icon: "⇄", colorClass: "purple", limit: 1200000 },
-  Shopping: { label: "Mua sắm", icon: "◈", colorClass: "purple", limit: 2000000 },
-  Education: { label: "Học tập", icon: "○", colorClass: "teal", limit: 1500000 },
-  Entertainment: { label: "Giải trí", icon: "♪", colorClass: "", limit: 1200000 },
+  Transport: {
+    label: "Di chuyển",
+    icon: "⇄",
+    colorClass: "purple",
+    limit: 1200000,
+  },
+  Shopping: {
+    label: "Mua sắm",
+    icon: "◈",
+    colorClass: "purple",
+    limit: 2000000,
+  },
+  Education: {
+    label: "Học tập",
+    icon: "○",
+    colorClass: "teal",
+    limit: 1500000,
+  },
+  Entertainment: {
+    label: "Giải trí",
+    icon: "♪",
+    colorClass: "",
+    limit: 1200000,
+  },
   Family: { label: "Gia đình", icon: "⌂", colorClass: "teal", limit: 1800000 },
   Debt: { label: "Trả nợ", icon: "✓", colorClass: "purple", limit: 1500000 },
-  Other: { label: "Khác", icon: "•", colorClass: "", limit: 1000000 }
+  Other: { label: "Khác", icon: "•", colorClass: "", limit: 1000000 },
 };
 
 const state = {
@@ -19,7 +39,7 @@ const state = {
   today: new Date(2026, 5, 4, 9, 32),
   monthlyBudget: 10000000,
   categoryBudgets: Object.fromEntries(
-    Object.entries(categories).map(([key, value]) => [key, value.limit])
+    Object.entries(categories).map(([key, value]) => [key, value.limit]),
   ),
   transactions: [
     createTransaction("Cà phê sáng", 90000, "Food", "2026-06-01"),
@@ -32,8 +52,8 @@ const state = {
     createTransaction("Ăn uống cuối tuần", 980000, "Food", "2026-06-04"),
     createTransaction("Sách và học tập", 480000, "Education", "2026-06-04"),
     createTransaction("Vé xem phim", 350000, "Entertainment", "2026-06-04"),
-    createTransaction("Chuyển khoản gia đình", 1190000, "Family", "2026-06-04")
-  ]
+    createTransaction("Chuyển khoản gia đình", 1190000, "Family", "2026-06-04"),
+  ],
 };
 
 const chatLog = document.querySelector("#chatLog");
@@ -55,7 +75,7 @@ function createTransaction(label, amount, category, date, options = {}) {
     exceptionType: options.exceptionType || "normal",
     excludedFromForecast: Boolean(options.excludedFromForecast),
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
   };
 }
 
@@ -91,7 +111,8 @@ function parseAmount(text) {
 
   const value = Number(numberMatch[1]);
   if (normalized.includes("trieu")) return value * 1000000;
-  if (normalized.includes("nghin") || normalized.includes("k")) return value * 1000;
+  if (normalized.includes("nghin") || normalized.includes("k"))
+    return value * 1000;
   return value;
 }
 
@@ -132,18 +153,26 @@ function normalizeSearch(text) {
 }
 
 function escapeHtml(text) {
-  return String(text).replace(/[&<>"']/g, (char) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;"
-  })[char]);
+  return String(text).replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;",
+      })[char],
+  );
 }
 
 function formatDate(date) {
   const value = new Date(date);
-  return value.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit", year: "numeric" });
+  return value.toLocaleDateString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 }
 
 function getCategorySnapshot(category, month = state.month) {
@@ -151,16 +180,23 @@ function getCategorySnapshot(category, month = state.month) {
     .filter((item) => item.category === category && item.date.startsWith(month))
     .reduce((sum, item) => sum + item.amount, 0);
   const forecastBase = state.transactions
-    .filter((item) => item.category === category && item.date.startsWith(month) && !item.excludedFromForecast)
+    .filter(
+      (item) =>
+        item.category === category &&
+        item.date.startsWith(month) &&
+        !item.excludedFromForecast,
+    )
     .reduce((sum, item) => sum + item.amount, 0);
   const budget = state.categoryBudgets[category] || categories.Other.limit;
-  const forecastEndOfMonth = (forecastBase / daysElapsed()) * daysInMonth(month);
+  const forecastEndOfMonth =
+    (forecastBase / daysElapsed()) * daysInMonth(month);
   const remaining = budget - spent;
-  const riskLevel = spent > budget || forecastEndOfMonth > budget
-    ? "danger"
-    : forecastEndOfMonth > budget * 0.9
-      ? "warning"
-      : "safe";
+  const riskLevel =
+    spent > budget || forecastEndOfMonth > budget
+      ? "danger"
+      : forecastEndOfMonth > budget * 0.9
+        ? "warning"
+        : "safe";
 
   return {
     category,
@@ -169,26 +205,41 @@ function getCategorySnapshot(category, month = state.month) {
     spent,
     remaining,
     forecastEndOfMonth,
-    riskLevel
+    riskLevel,
   };
 }
 
 function getBudgetSnapshot({ month = state.month, category } = {}) {
-  const monthTransactions = state.transactions.filter((item) => item.date.startsWith(month));
-  const totalSpent = monthTransactions.reduce((sum, item) => sum + item.amount, 0);
+  const monthTransactions = state.transactions.filter((item) =>
+    item.date.startsWith(month),
+  );
+  const totalSpent = monthTransactions.reduce(
+    (sum, item) => sum + item.amount,
+    0,
+  );
   const forecastBase = monthTransactions
     .filter((item) => !item.excludedFromForecast)
     .reduce((sum, item) => sum + item.amount, 0);
   const dailySpendingRate = forecastBase / daysElapsed();
   const forecastEndOfMonth = dailySpendingRate * daysInMonth(month);
   const remaining = state.monthlyBudget - totalSpent;
-  const recommendedDailySpend = Math.max(remaining, 0) / Math.max(daysLeft(), 1);
-  const riskLevel = totalSpent > state.monthlyBudget || forecastEndOfMonth > state.monthlyBudget
-    ? "danger"
-    : forecastEndOfMonth > state.monthlyBudget * 0.9
-      ? "warning"
-      : "safe";
-  const categoryBreakdown = Object.keys(categories).map((key) => getCategorySnapshot(key, month));
+  const recommendedDailySpend =
+    Math.max(remaining, 0) / Math.max(daysLeft(), 1);
+  let riskLevel = "safe";
+  let riskLabel = "An toàn";
+  if (totalSpent > state.monthlyBudget) {
+    riskLevel = "danger";
+    riskLabel = "Đã vượt";
+  } else if (forecastEndOfMonth > state.monthlyBudget) {
+    riskLevel = "warning";
+    riskLabel = "Cảnh báo vượt";
+  } else if (forecastEndOfMonth > state.monthlyBudget * 0.9) {
+    riskLevel = "warning";
+    riskLabel = "Cảnh báo";
+  }
+  const categoryBreakdown = Object.keys(categories).map((key) =>
+    getCategorySnapshot(key, month),
+  );
   const recentTransactions = monthTransactions
     .slice()
     .sort((a, b) => new Date(b.date) - new Date(a.date))
@@ -202,9 +253,12 @@ function getBudgetSnapshot({ month = state.month, category } = {}) {
       dailySpendingRate,
       forecastEndOfMonth,
       riskLevel,
+      riskLabel,
       recommendedDailySpend,
       categoryBreakdown: [getCategorySnapshot(category, month)],
-      recentTransactions: recentTransactions.filter((item) => item.category === category)
+      recentTransactions: recentTransactions.filter(
+        (item) => item.category === category,
+      ),
     };
   }
 
@@ -216,20 +270,26 @@ function getBudgetSnapshot({ month = state.month, category } = {}) {
     dailySpendingRate,
     forecastEndOfMonth,
     riskLevel,
+    riskLabel,
     recommendedDailySpend,
     categoryBreakdown,
-    recentTransactions
+    recentTransactions,
   };
 }
 
-function generateBudgetWarningCard({ budgetSnapshot, categorySnapshot, triggerTransaction }) {
+function generateBudgetWarningCard({
+  budgetSnapshot,
+  categorySnapshot,
+  triggerTransaction,
+}) {
   if (categorySnapshot) {
     const title = `Ngân sách ${categorySnapshot.label}`;
-    const explanation = categorySnapshot.riskLevel === "danger"
-      ? `${categorySnapshot.label} đang có nguy cơ vượt ngân sách.`
-      : categorySnapshot.riskLevel === "warning"
-        ? `${categorySnapshot.label} đang gần chạm ngân sách.`
-        : `${categorySnapshot.label} vẫn trong vùng an toàn.`;
+    const explanation =
+      categorySnapshot.riskLevel === "danger"
+        ? `${categorySnapshot.label} đang có nguy cơ vượt ngân sách.`
+        : categorySnapshot.riskLevel === "warning"
+          ? `${categorySnapshot.label} đang gần chạm ngân sách.`
+          : `${categorySnapshot.label} vẫn trong vùng an toàn.`;
 
     return {
       type: "category_budget",
@@ -239,23 +299,25 @@ function generateBudgetWarningCard({ budgetSnapshot, categorySnapshot, triggerTr
         budget: categorySnapshot.budget,
         spent: categorySnapshot.spent,
         remaining: categorySnapshot.remaining,
-        forecast: categorySnapshot.forecastEndOfMonth
+        forecast: categorySnapshot.forecastEndOfMonth,
       },
       explanation,
-      actions: defaultActions(categorySnapshot.category, triggerTransaction)
+      actions: defaultActions(categorySnapshot.category, triggerTransaction),
     };
   }
 
-  const title = budgetSnapshot.riskLevel === "danger"
-    ? "Vượt ngân sách"
-    : budgetSnapshot.riskLevel === "warning"
-      ? "Nguy cơ vượt ngân sách"
-      : "Ngân sách khỏe";
-  const explanation = budgetSnapshot.riskLevel === "danger"
-    ? "Bạn đã vượt hoặc được dự báo sẽ vượt ngân sách tháng này."
-    : budgetSnapshot.riskLevel === "warning"
-      ? "Tốc độ chi hiện tại đang khá cao so với ngân sách tháng."
-      : "Tốc độ chi hiện tại vẫn nằm trong ngân sách tháng.";
+  const title =
+    budgetSnapshot.riskLevel === "danger"
+      ? "Vượt ngân sách"
+      : budgetSnapshot.riskLevel === "warning"
+        ? "Nguy cơ vượt ngân sách"
+        : "Ngân sách khỏe";
+  const explanation =
+    budgetSnapshot.riskLevel === "danger"
+      ? "Bạn đã vượt hoặc được dự báo sẽ vượt ngân sách tháng này."
+      : budgetSnapshot.riskLevel === "warning"
+        ? "Tốc độ chi hiện tại đang khá cao so với ngân sách tháng."
+        : "Tốc độ chi hiện tại vẫn nằm trong ngân sách tháng.";
 
   return {
     type: "budget",
@@ -265,10 +327,10 @@ function generateBudgetWarningCard({ budgetSnapshot, categorySnapshot, triggerTr
       budget: budgetSnapshot.monthlyBudget,
       spent: budgetSnapshot.totalSpent,
       remaining: budgetSnapshot.remaining,
-      forecast: budgetSnapshot.forecastEndOfMonth
+      forecast: budgetSnapshot.forecastEndOfMonth,
     },
     explanation,
-    actions: defaultActions(triggerTransaction?.category, triggerTransaction)
+    actions: defaultActions(triggerTransaction?.category, triggerTransaction),
   };
 }
 
@@ -277,18 +339,25 @@ function defaultActions(category, triggerTransaction) {
     {
       label: "Xem chi tiết",
       actionType: "open_dashboard",
-      payload: { category }
+      payload: { category },
     },
     {
       label: "Rà soát giao dịch",
       actionType: "tool_call",
-      payload: { tool: "reviewUnusualExpenses", arguments: { month: state.month } }
+      payload: {
+        tool: "reviewUnusualExpenses",
+        arguments: { month: state.month },
+      },
     },
     {
       label: "Điều chỉnh ngân sách",
       actionType: "prompt",
-      payload: { message: category ? `Cập nhật ngân sách ${categoryLabel(category)} lên 3 triệu` : "Tăng ngân sách tháng này lên 12 triệu" }
-    }
+      payload: {
+        message: category
+          ? `Cập nhật ngân sách ${categoryLabel(category)} lên 3 triệu`
+          : "Tăng ngân sách tháng này lên 12 triệu",
+      },
+    },
   ];
 
   if (triggerTransaction && triggerTransaction.exceptionType === "normal") {
@@ -297,8 +366,11 @@ function defaultActions(category, triggerTransaction) {
       actionType: "tool_call",
       payload: {
         tool: "markExpenseException",
-        arguments: { transactionId: triggerTransaction.id, exceptionType: "one_time" }
-      }
+        arguments: {
+          transactionId: triggerTransaction.id,
+          exceptionType: "one_time",
+        },
+      },
     });
   }
 
@@ -313,17 +385,29 @@ function findTransactions(searchQuery) {
   const yesterdayDate = yesterday.toISOString().slice(0, 10);
 
   return state.transactions.filter((item) => {
-    const haystack = normalizeSearch(`${item.label} ${categoryLabel(item.category)} ${item.date}`);
+    const haystack = normalizeSearch(
+      `${item.label} ${categoryLabel(item.category)} ${item.date}`,
+    );
     if (normalized.includes("hom qua")) return item.date === yesterdayDate;
-    if (normalized.includes("vua roi") || normalized.includes("luc nay")) return item === state.transactions[0];
-    return haystack.includes(normalized) || normalized.includes(normalizeSearch(item.label));
+    if (normalized.includes("vua roi") || normalized.includes("luc nay"))
+      return item === state.transactions[0];
+    return (
+      haystack.includes(normalized) ||
+      normalized.includes(normalizeSearch(item.label))
+    );
   });
 }
 
 function recalculateAfterWrite(category, triggerTransaction) {
   const budgetSnapshot = getBudgetSnapshot({ month: state.month });
-  const categorySnapshot = category ? getCategorySnapshot(category, state.month) : undefined;
-  const warningCard = generateBudgetWarningCard({ budgetSnapshot, categorySnapshot, triggerTransaction });
+  const categorySnapshot = category
+    ? getCategorySnapshot(category, state.month)
+    : undefined;
+  const warningCard = generateBudgetWarningCard({
+    budgetSnapshot,
+    categorySnapshot,
+    triggerTransaction,
+  });
   renderAll();
   return { budgetSnapshot, categorySnapshot, warningCard };
 }
@@ -331,7 +415,13 @@ function recalculateAfterWrite(category, triggerTransaction) {
 const moniTools = {
   addExpense({ label, amount, category, date, note }) {
     validateAmount(amount);
-    const transaction = createTransaction(label, amount, category, date || todayIso(), { note });
+    const transaction = createTransaction(
+      label,
+      amount,
+      category,
+      date || todayIso(),
+      { note },
+    );
     state.transactions.unshift(transaction);
     const snapshots = recalculateAfterWrite(category, transaction);
     return { transaction, ...snapshots };
@@ -343,10 +433,14 @@ const moniTools = {
       : findTransactions(searchQuery);
 
     if (matches.length !== 1) {
-      return lowConfidenceTransactionCard(matches, "Bạn muốn sửa khoản nào?", (item) => ({
-        tool: "updateExpense",
-        arguments: { transactionId: item.id, amount, category, label, date }
-      }));
+      return lowConfidenceTransactionCard(
+        matches,
+        "Bạn muốn sửa khoản nào?",
+        (item) => ({
+          tool: "updateExpense",
+          arguments: { transactionId: item.id, amount, category, label, date },
+        }),
+      );
     }
     if (amount !== undefined) validateAmount(amount);
 
@@ -358,7 +452,10 @@ const moniTools = {
     if (date) transaction.date = date;
     transaction.updatedAt = new Date().toISOString();
 
-    const snapshots = recalculateAfterWrite(category || oldCategory, transaction);
+    const snapshots = recalculateAfterWrite(
+      category || oldCategory,
+      transaction,
+    );
     return { transaction, ...snapshots };
   },
 
@@ -368,14 +465,20 @@ const moniTools = {
       : findTransactions(searchQuery);
 
     if (matches.length !== 1) {
-      return lowConfidenceTransactionCard(matches, "Bạn muốn xóa khoản nào?", (item) => ({
-        tool: "deleteExpense",
-        arguments: { transactionId: item.id }
-      }));
+      return lowConfidenceTransactionCard(
+        matches,
+        "Bạn muốn xóa khoản nào?",
+        (item) => ({
+          tool: "deleteExpense",
+          arguments: { transactionId: item.id },
+        }),
+      );
     }
 
     const deletedTransaction = matches[0];
-    state.transactions = state.transactions.filter((item) => item.id !== deletedTransaction.id);
+    state.transactions = state.transactions.filter(
+      (item) => item.id !== deletedTransaction.id,
+    );
     const snapshots = recalculateAfterWrite(deletedTransaction.category);
     return { deletedTransaction, ...snapshots };
   },
@@ -391,7 +494,11 @@ const moniTools = {
     validateAmount(amount);
     state.categoryBudgets[category] = amount;
     const snapshots = recalculateAfterWrite(category);
-    return { categorySnapshot: snapshots.categorySnapshot, budgetSnapshot: snapshots.budgetSnapshot, warningCard: snapshots.warningCard };
+    return {
+      categorySnapshot: snapshots.categorySnapshot,
+      budgetSnapshot: snapshots.budgetSnapshot,
+      warningCard: snapshots.warningCard,
+    };
   },
 
   markExpenseException({ transactionId, searchQuery, exceptionType }) {
@@ -400,15 +507,21 @@ const moniTools = {
       : findTransactions(searchQuery);
 
     if (matches.length !== 1) {
-      return lowConfidenceTransactionCard(matches, "Bạn muốn đánh dấu khoản nào?", (item) => ({
-        tool: "markExpenseException",
-        arguments: { transactionId: item.id, exceptionType }
-      }));
+      return lowConfidenceTransactionCard(
+        matches,
+        "Bạn muốn đánh dấu khoản nào?",
+        (item) => ({
+          tool: "markExpenseException",
+          arguments: { transactionId: item.id, exceptionType },
+        }),
+      );
     }
 
     const transaction = matches[0];
     transaction.exceptionType = exceptionType;
-    transaction.excludedFromForecast = ["one_time", "debt", "refund"].includes(exceptionType);
+    transaction.excludedFromForecast = ["one_time", "debt", "refund"].includes(
+      exceptionType,
+    );
     if (exceptionType === "debt") transaction.category = "Debt";
     transaction.updatedAt = new Date().toISOString();
 
@@ -422,7 +535,12 @@ const moniTools = {
     const budgetSnapshotBefore = getBudgetSnapshot({ month });
     const candidates = state.transactions
       .filter((item) => item.date.startsWith(month))
-      .filter((item) => item.amount >= 1000000 || item.excludedFromForecast || /học phí|trả nợ|vay/i.test(item.label))
+      .filter(
+        (item) =>
+          item.amount >= 1000000 ||
+          item.excludedFromForecast ||
+          /học phí|trả nợ|vay/i.test(item.label),
+      )
       .map((item) => ({
         transactionId: item.id,
         label: item.label,
@@ -431,7 +549,11 @@ const moniTools = {
         reason: item.excludedFromForecast
           ? "Đang được loại khỏi dự báo"
           : "Khoản lớn hoặc có tính chất bất thường",
-        suggestedActions: ["Đánh dấu khoản chi một lần", "Đổi danh mục", "Giữ là chi tiêu bình thường"]
+        suggestedActions: [
+          "Đánh dấu khoản chi một lần",
+          "Đổi danh mục",
+          "Giữ là chi tiêu bình thường",
+        ],
       }));
 
     const potentialImpact = candidates.length
@@ -439,7 +561,7 @@ const moniTools = {
       : "Chưa thấy khoản nào đủ bất thường để cần rà soát.";
 
     return { candidates, budgetSnapshotBefore, potentialImpact };
-  }
+  },
 };
 
 function validateAmount(amount) {
@@ -468,11 +590,11 @@ function lowConfidenceTransactionCard(matches, title, buildFollowUp) {
           return {
             label: `${item.label} - ${money(item.amount)} (${formatDate(item.date)})`,
             actionType: followUp ? "tool_call" : "confirm_selection",
-            payload: followUp || { transactionId: item.id }
+            payload: followUp || { transactionId: item.id },
           };
-        })
-      }
-    ]
+        }),
+      },
+    ],
   };
 }
 
@@ -491,15 +613,15 @@ function buildLLMContext() {
       budget: item.budget,
       spent: item.spent,
       remaining: item.remaining,
-      riskLevel: item.riskLevel
+      riskLevel: item.riskLevel,
     })),
     recentTransactions: snapshot.recentTransactions.map((item) => ({
       id: item.id,
       label: item.label,
       amount: item.amount,
       category: item.category,
-      date: item.date
-    }))
+      date: item.date,
+    })),
   };
 }
 
@@ -510,18 +632,36 @@ function mockLLMRoute(message) {
   const context = buildLLMContext();
 
   if (/(ra soat|bat thuong|du bao sai|tai sao)/.test(lower)) {
-    return { intent: "review_unusual_expenses", tool: "reviewUnusualExpenses", arguments: { month: context.currentMonth } };
+    return {
+      intent: "review_unusual_expenses",
+      tool: "reviewUnusualExpenses",
+      arguments: { month: context.currentMonth },
+    };
   }
 
   if (/(con bao nhieu|con lai|du bao|nguy co|tinh trang)/.test(lower)) {
-    return { intent: "get_budget_snapshot", tool: "getBudgetSnapshot", arguments: { month: context.currentMonth, category: lower.includes("an uong") ? "Food" : undefined } };
+    return {
+      intent: "get_budget_snapshot",
+      tool: "getBudgetSnapshot",
+      arguments: {
+        month: context.currentMonth,
+        category: lower.includes("an uong") ? "Food" : undefined,
+      },
+    };
   }
 
   if (/(xoa|bo di|nhap nham)/.test(lower)) {
-    return { intent: "delete_expense", tool: "deleteExpense", arguments: { searchQuery: message } };
+    return {
+      intent: "delete_expense",
+      tool: "deleteExpense",
+      arguments: { searchQuery: message },
+    };
   }
 
-  if (/(sua|doi khoan|khong phai|thanh)/.test(lower) && /(khoan|taxi|an|hoc phi|hom qua|luc nay)/.test(lower)) {
+  if (
+    /(sua|doi khoan|khong phai|thanh)/.test(lower) &&
+    /(khoan|taxi|an|hoc phi|hom qua|luc nay)/.test(lower)
+  ) {
     const args = { searchQuery: message };
     if (amount) args.amount = amount;
     if (/(danh muc|sang)/.test(lower)) args.category = category;
@@ -534,18 +674,28 @@ function mockLLMRoute(message) {
       : lower.includes("binh thuong") || lower.includes("cu tinh")
         ? "normal"
         : "one_time";
-    return { intent: "mark_expense_exception", tool: "markExpenseException", arguments: { searchQuery: message, exceptionType } };
+    return {
+      intent: "mark_expense_exception",
+      tool: "markExpenseException",
+      arguments: { searchQuery: message, exceptionType },
+    };
   }
 
   if (/(ngan sach)/.test(lower) && amount) {
-    if (/(an uong|di chuyen|mua sam|hoc|giai tri|hoa don|gia dinh)/.test(lower)) {
+    if (
+      /(an uong|di chuyen|mua sam|hoc|giai tri|hoa don|gia dinh)/.test(lower)
+    ) {
       return {
         intent: "update_category_budget",
         tool: "updateCategoryBudget",
-        arguments: { category, amount, month: context.currentMonth }
+        arguments: { category, amount, month: context.currentMonth },
       };
     }
-    return { intent: "update_monthly_budget", tool: "updateMonthlyBudget", arguments: { amount, month: context.currentMonth } };
+    return {
+      intent: "update_monthly_budget",
+      tool: "updateMonthlyBudget",
+      arguments: { amount, month: context.currentMonth },
+    };
   }
 
   if (/(them|ghi|toi vua|khoan|chi|tra tien)/.test(lower)) {
@@ -553,8 +703,9 @@ function mockLLMRoute(message) {
       return {
         intent: "low_confidence_write",
         needsConfirmation: true,
-        assistantMessage: "Mình chưa đọc được số tiền. Bạn gửi lại theo mẫu như: Thêm ăn tối 80k nhé.",
-        cards: []
+        assistantMessage:
+          "Mình chưa đọc được số tiền. Bạn gửi lại theo mẫu như: Thêm ăn tối 80k nhé.",
+        cards: [],
       };
     }
     return {
@@ -564,14 +715,15 @@ function mockLLMRoute(message) {
         label: parseLabel(message, category),
         amount,
         category,
-        date: todayIso()
-      }
+        date: todayIso(),
+      },
     };
   }
 
   return {
     intent: "small_talk_or_help",
-    assistantMessage: "Mình có thể thêm/sửa/xóa khoản chi, cập nhật ngân sách, rà soát giao dịch bất thường và cho bạn biết nguy cơ vượt ngân sách."
+    assistantMessage:
+      "Mình có thể thêm/sửa/xóa khoản chi, cập nhật ngân sách, rà soát giao dịch bất thường và cho bạn biết nguy cơ vượt ngân sách.",
   };
 }
 
@@ -583,9 +735,9 @@ function moniChatEndpoint({ message, userId, month }) {
       message,
       userId,
       month,
-      context: buildLLMContext()
+      context: buildLLMContext(),
     },
-    response: llmDecision
+    response: llmDecision,
   };
   if (!llmDecision.tool) {
     return {
@@ -593,19 +745,27 @@ function moniChatEndpoint({ message, userId, month }) {
       toolCalls: [],
       cards: llmDecision.cards || [],
       intent: llmDecision.intent,
-      llmTrace
+      llmTrace,
     };
   }
 
   const toolCall = {
     name: llmDecision.tool,
-    arguments: { ...llmDecision.arguments, userId, month: llmDecision.arguments.month || month }
+    arguments: {
+      ...llmDecision.arguments,
+      userId,
+      month: llmDecision.arguments.month || month,
+    },
   };
 
   try {
     const toolResult = moniTools[llmDecision.tool](llmDecision.arguments);
     if (toolResult.needsConfirmation) {
-      return { ...toolResult, toolCalls: [toolCall], intent: llmDecision.intent };
+      return {
+        ...toolResult,
+        toolCalls: [toolCall],
+        intent: llmDecision.intent,
+      };
     }
 
     return {
@@ -614,7 +774,7 @@ function moniChatEndpoint({ message, userId, month }) {
       cards: cardsForTool(llmDecision.tool, toolResult),
       toolResult,
       intent: llmDecision.intent,
-      llmTrace
+      llmTrace,
     };
   } catch (error) {
     return {
@@ -622,7 +782,7 @@ function moniChatEndpoint({ message, userId, month }) {
       toolCalls: [toolCall],
       cards: [],
       llmTrace,
-      error: { code: error.message }
+      error: { code: error.message },
     };
   }
 }
@@ -632,17 +792,18 @@ async function callMoniChat({ message, userId, month }) {
     const response = await fetch("/api/moni/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, userId, month })
+      body: JSON.stringify({ message, userId, month }),
     });
 
     const payload = await response.json();
     if (!response.ok) {
       return {
-        assistantMessage: payload.error?.message || "Server chưa xử lý được yêu cầu này.",
+        assistantMessage:
+          payload.error?.message || "Server chưa xử lý được yêu cầu này.",
         toolCalls: [],
         cards: [],
         llmTrace: payload.llmTrace,
-        error: payload.error
+        error: payload.error,
       };
     }
     return payload;
@@ -661,7 +822,7 @@ function syncServerState(serverState) {
   if (serverState.categoryBudgets) {
     state.categoryBudgets = {
       ...state.categoryBudgets,
-      ...serverState.categoryBudgets
+      ...serverState.categoryBudgets,
     };
   }
 
@@ -675,7 +836,8 @@ function syncServerState(serverState) {
 function assistantMessageForTool(tool, result) {
   if (tool === "addExpense") {
     const item = result.transaction;
-    const unusual = item.amount >= 2500000 || ["Education", "Debt"].includes(item.category);
+    const unusual =
+      item.amount >= 2500000 || ["Education", "Debt"].includes(item.category);
     return unusual
       ? `Đã ghi nhận ${item.label} ${money(item.amount)} vào ${categoryLabel(item.category)}. Khoản này khá lớn, bạn có muốn đánh dấu là khoản chi một lần không?`
       : `Đã ghi nhận ${item.label} ${money(item.amount)} vào ${categoryLabel(item.category)}.`;
@@ -720,7 +882,16 @@ function assistantMessageForTool(tool, result) {
 }
 
 function cardsForTool(tool, result) {
-  if (["addExpense", "updateExpense", "deleteExpense", "updateMonthlyBudget", "updateCategoryBudget", "markExpenseException"].includes(tool)) {
+  if (
+    [
+      "addExpense",
+      "updateExpense",
+      "deleteExpense",
+      "updateMonthlyBudget",
+      "updateCategoryBudget",
+      "markExpenseException",
+    ].includes(tool)
+  ) {
     return [result.warningCard].filter(Boolean);
   }
 
@@ -737,7 +908,7 @@ function cardsForTool(tool, result) {
         explanation: result.potentialImpact,
         metrics: {
           candidates: result.candidates.length,
-          forecast: result.budgetSnapshotBefore.forecastEndOfMonth
+          forecast: result.budgetSnapshotBefore.forecastEndOfMonth,
         },
         candidates: result.candidates,
         actions: result.candidates.flatMap((candidate) => [
@@ -746,19 +917,25 @@ function cardsForTool(tool, result) {
             actionType: "tool_call",
             payload: {
               tool: "markExpenseException",
-              arguments: { transactionId: candidate.transactionId, exceptionType: "one_time" }
-            }
+              arguments: {
+                transactionId: candidate.transactionId,
+                exceptionType: "one_time",
+              },
+            },
           },
           {
             label: `Giữ bình thường: ${candidate.label}`,
             actionType: "tool_call",
             payload: {
               tool: "markExpenseException",
-              arguments: { transactionId: candidate.transactionId, exceptionType: "normal" }
-            }
-          }
-        ])
-      }
+              arguments: {
+                transactionId: candidate.transactionId,
+                exceptionType: "normal",
+              },
+            },
+          },
+        ]),
+      },
     ];
   }
 
@@ -768,15 +945,24 @@ function cardsForTool(tool, result) {
 function failureMessage(code) {
   const messages = {
     invalid_amount: "Số tiền chưa hợp lệ. Bạn nhập lại giúp mình nhé.",
-    unknown_category: "Mình chưa nhận ra danh mục này. Bạn chọn lại danh mục giúp mình nhé.",
+    unknown_category:
+      "Mình chưa nhận ra danh mục này. Bạn chọn lại danh mục giúp mình nhé.",
     transaction_not_found: "Mình chưa tìm thấy giao dịch phù hợp.",
-    forbidden: "Bạn không có quyền cập nhật giao dịch này."
+    forbidden: "Bạn không có quyền cập nhật giao dịch này.",
   };
-  return messages[code] || "Mình chưa xử lý được yêu cầu này. Bạn thử lại sau nhé.";
+  return (
+    messages[code] || "Mình chưa xử lý được yêu cầu này. Bạn thử lại sau nhé."
+  );
 }
 
 function riskText(risk) {
-  return risk === "safe" ? "An toàn" : risk === "warning" ? "Cảnh báo" : risk === "danger" ? "Đã vượt" : "Cần xác nhận";
+  return risk === "safe"
+    ? "An toàn"
+    : risk === "warning"
+      ? "Cảnh báo"
+      : risk === "danger"
+        ? "Đã vượt"
+        : "Cần xác nhận";
 }
 
 function addUserMessage(text) {
@@ -792,8 +978,6 @@ function addMoniResponse(response) {
   node.className = "message moni";
   node.innerHTML = `
     <div class="moni-message-markdown">${renderMarkdown(response.assistantMessage || "")}</div>
-    ${renderLLMTrace(response.llmTrace)}
-    ${renderToolTrace(response.toolCalls)}
     ${(response.cards || []).map(renderCard).join("")}
   `;
   chatLog.append(node);
@@ -896,14 +1080,22 @@ function renderCard(card) {
         <span class="status-chip ${card.riskLevel}">${riskText(card.riskLevel)}</span>
       </div>
       ${card.explanation ? `<p class="card-explain">${escapeHtml(card.explanation)}</p>` : ""}
-      ${metricEntries.length ? `<div class="budget-stats">
-        ${metricEntries.map(([key, value]) => `
+      ${
+        metricEntries.length
+          ? `<div class="budget-stats">
+        ${metricEntries
+          .map(
+            ([key, value]) => `
           <div>
             <span>${metricLabel(key)}</span>
             <strong>${typeof value === "number" ? money(value) : escapeHtml(value)}</strong>
           </div>
-        `).join("")}
-      </div>` : renderCardData(card.data)}
+        `,
+          )
+          .join("")}
+      </div>`
+          : renderCardData(card.data)
+      }
       ${renderActions(card.actions)}
     </section>
   `;
@@ -913,16 +1105,18 @@ function renderCardData(data) {
   if (!data) return "";
   const rows = [];
   if (Array.isArray(data.topCategories)) {
-    rows.push(...data.topCategories.slice(0, 4).map((item) => ({
-      label: item.label,
-      value: money(item.spent)
-    })));
+    rows.push(
+      ...data.topCategories.slice(0, 4).map((item) => ({
+        label: item.label,
+        value: money(item.spent),
+      })),
+    );
   }
   if (data.impact) {
     rows.push(
       { label: "Chi thêm", value: money(data.impact.additionalSpent) },
       { label: "Dự báo đổi", value: money(data.impact.forecastChange) },
-      { label: "Vượt dự kiến", value: money(data.impact.overBudgetAmount) }
+      { label: "Vượt dự kiến", value: money(data.impact.overBudgetAmount) },
     );
   }
   if (data.safeToSpendScore !== undefined) {
@@ -930,18 +1124,25 @@ function renderCardData(data) {
       { label: "Safe score", value: `${data.safeToSpendScore}/100` },
       { label: "Khoản mua", value: money(data.purchaseAmount || 0) },
       { label: "Còn tháng", value: money(data.remainingBudget || 0) },
-      { label: "Dự báo sau mua", value: money(data.forecastAfterPurchase || 0) }
+      {
+        label: "Dự báo sau mua",
+        value: money(data.forecastAfterPurchase || 0),
+      },
     );
   }
   if (!rows.length) return "";
   return `
     <div class="budget-stats">
-      ${rows.map((row) => `
+      ${rows
+        .map(
+          (row) => `
         <div>
           <span>${escapeHtml(row.label)}</span>
           <strong>${escapeHtml(row.value)}</strong>
         </div>
-      `).join("")}
+      `,
+        )
+        .join("")}
     </div>
   `;
 }
@@ -955,13 +1156,19 @@ function renderReviewCard(card) {
       </div>
       <p class="card-explain">${escapeHtml(card.explanation || "")}</p>
       <div class="review-list">
-        ${(card.candidates || []).map((item) => `
+        ${
+          (card.candidates || [])
+            .map(
+              (item) => `
           <article>
             <strong>${escapeHtml(item.label)}</strong>
             <span>${money(item.amount)} • ${categoryLabel(item.category)}</span>
             <p>${escapeHtml(item.reason)}</p>
           </article>
-        `).join("") || "<p>Không có khoản cần rà soát.</p>"}
+        `,
+            )
+            .join("") || "<p>Không có khoản cần rà soát.</p>"
+        }
       </div>
       ${renderActions(card.actions)}
     </section>
@@ -973,9 +1180,15 @@ function renderConfirmationCard(card) {
     <section class="confirm-card">
       <h3>${escapeHtml(card.title)}</h3>
       <div class="confirm-options">
-        ${(card.actions || []).map((action) => `
+        ${
+          (card.actions || [])
+            .map(
+              (action) => `
           <button type="button" data-action='${escapeHtml(JSON.stringify(action))}'>${escapeHtml(action.label)}</button>
-        `).join("") || "<p>Không có lựa chọn phù hợp.</p>"}
+        `,
+            )
+            .join("") || "<p>Không có lựa chọn phù hợp.</p>"
+        }
       </div>
     </section>
   `;
@@ -985,9 +1198,13 @@ function renderActions(actions = []) {
   if (!actions.length) return "";
   return `
     <div class="actions">
-      ${actions.map((action) => `
+      ${actions
+        .map(
+          (action) => `
         <button type="button" data-action='${escapeHtml(JSON.stringify(action))}'>${escapeHtml(action.label)}</button>
-      `).join("")}
+      `,
+        )
+        .join("")}
     </div>
   `;
 }
@@ -998,14 +1215,18 @@ function metricLabel(key) {
     spent: "Spent",
     remaining: "Remaining",
     forecast: "Forecast",
-    candidates: "Khoản cần xem"
+    candidates: "Khoản cần xem",
   };
   return labels[key] || key;
 }
 
 async function handleMessage(text) {
   addUserMessage(text);
-  const response = await callMoniChat({ message: text, userId: state.userId, month: state.month });
+  const response = await callMoniChat({
+    message: text,
+    userId: state.userId,
+    month: state.month,
+  });
   syncServerState(response.serverState);
   addMoniResponse(response);
 }
@@ -1035,7 +1256,7 @@ function executeAction(action) {
     addMoniResponse({
       assistantMessage: assistantMessageForTool(tool, result),
       toolCalls: [{ name: tool, arguments: args }],
-      cards: cardsForTool(tool, result)
+      cards: cardsForTool(tool, result),
     });
   }
 }
@@ -1050,36 +1271,59 @@ function renderAll() {
 function renderDashboard() {
   const snap = getBudgetSnapshot({ month: state.month });
   const progress = Math.min((snap.totalSpent / state.monthlyBudget) * 100, 100);
-  const progressColor = snap.riskLevel === "safe" ? "var(--green)" : snap.riskLevel === "warning" ? "var(--yellow)" : "var(--red)";
+  const progressColor =
+    snap.riskLevel === "safe"
+      ? "var(--green)"
+      : snap.riskLevel === "warning"
+        ? "var(--yellow)"
+        : "var(--red)";
 
-  document.querySelector("#daysLeftLabel").textContent = `Còn ${daysLeft()} ngày`;
-  document.querySelector("#dashboardBudget").textContent = money(state.monthlyBudget);
-  document.querySelector("#dashboardSpent").textContent = money(snap.totalSpent);
-  document.querySelector("#dashboardRemaining").textContent = money(snap.remaining);
-  document.querySelector("#dashboardForecast").textContent = money(snap.forecastEndOfMonth);
-  document.querySelector("#dashboardDaily").textContent = money(snap.recommendedDailySpend);
-  document.querySelector("#dashboardRisk").textContent = riskText(snap.riskLevel);
-  document.querySelector("#dashboardRisk").className = `status-chip ${snap.riskLevel}`;
+  document.querySelector("#daysLeftLabel").textContent =
+    `Còn ${daysLeft()} ngày`;
+  document.querySelector("#dashboardBudget").textContent = money(
+    state.monthlyBudget,
+  );
+  document.querySelector("#dashboardSpent").textContent = money(
+    snap.totalSpent,
+  );
+  document.querySelector("#dashboardRemaining").textContent = money(
+    snap.remaining,
+  );
+  document.querySelector("#dashboardForecast").textContent = money(
+    snap.forecastEndOfMonth,
+  );
+  document.querySelector("#dashboardDaily").textContent = money(
+    snap.recommendedDailySpend,
+  );
+  document.querySelector("#dashboardRisk").textContent =
+    snap.riskLabel || riskText(snap.riskLevel);
+  document.querySelector("#dashboardRisk").className =
+    `status-chip ${snap.riskLevel}`;
   document.querySelector("#budgetProgress").style.width = `${progress}%`;
   document.querySelector("#budgetProgress").style.background = progressColor;
 }
 
 function renderCategories() {
-  const items = getBudgetSnapshot({ month: state.month }).categoryBreakdown
-    .filter((item) => item.spent > 0 || item.budget > 0)
+  const items = getBudgetSnapshot({ month: state.month })
+    .categoryBreakdown.filter((item) => item.spent > 0 || item.budget > 0)
     .sort((a, b) => a.label.localeCompare(b.label, "vi"));
 
-  document.querySelector("#categoryList").innerHTML = items.map((item) => {
-    const meta = categories[item.category] || categories.Other;
-    const label = item.remaining < 0 ? `Vượt ${money(Math.abs(item.remaining))}` : `Còn lại ${money(item.remaining)}`;
-    const chip = item.remaining < 0
-      ? "Đã vượt"
-      : item.riskLevel === "danger"
-        ? "Dự báo vượt"
-        : item.riskLevel === "warning"
-          ? "Gần hết"
-          : "Ổn định";
-    return `
+  document.querySelector("#categoryList").innerHTML = items
+    .map((item) => {
+      const meta = categories[item.category] || categories.Other;
+      const label =
+        item.remaining < 0
+          ? `Vượt ${money(Math.abs(item.remaining))}`
+          : `Còn lại ${money(item.remaining)}`;
+      const chip =
+        item.remaining < 0
+          ? "Đã vượt"
+          : item.riskLevel === "danger"
+            ? "Dự báo vượt"
+            : item.riskLevel === "warning"
+              ? "Gần hết"
+              : "Ổn định";
+      return `
       <article class="category-card">
         <span class="cat-icon ${meta.colorClass}">${meta.icon}</span>
         <div>
@@ -1090,11 +1334,15 @@ function renderCategories() {
         <span class="status-chip ${item.riskLevel} cat-state">${chip}</span>
       </article>
     `;
-  }).join("");
+    })
+    .join("");
 }
 
 function renderTransactions() {
-  document.querySelector("#transactionList").innerHTML = state.transactions.slice(0, 6).map((item) => `
+  document.querySelector("#transactionList").innerHTML = state.transactions
+    .slice(0, 6)
+    .map(
+      (item) => `
     <article class="transaction-mini">
       <div>
         <strong>${escapeHtml(item.label)}</strong>
@@ -1102,7 +1350,9 @@ function renderTransactions() {
       </div>
       <strong>-${money(item.amount)}</strong>
     </article>
-  `).join("");
+  `,
+    )
+    .join("");
 }
 
 function categoryTotals() {
@@ -1118,18 +1368,25 @@ function renderChart() {
   document.querySelector("#categoryChart").innerHTML = Object.entries(totals)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
-    .map(([key, value]) => `
+    .map(
+      ([key, value]) => `
       <div class="chart-row">
         <strong>${categoryLabel(key)}</strong>
         <span class="chart-track"><span style="width: ${(value / max) * 100}%"></span></span>
         <span>${shortMoney(value)}</span>
       </div>
-    `).join("");
+    `,
+    )
+    .join("");
 }
 
 function switchScreen(id) {
-  screens.forEach((screen) => screen.classList.toggle("active", screen.id === id));
-  tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.target === id));
+  screens.forEach((screen) =>
+    screen.classList.toggle("active", screen.id === id),
+  );
+  tabs.forEach((tab) =>
+    tab.classList.toggle("active", tab.dataset.target === id),
+  );
 }
 
 function scrollChat() {
@@ -1155,8 +1412,12 @@ document.addEventListener("click", (event) => {
   if (nav) switchScreen(nav.dataset.nav);
 });
 
-tabs.forEach((tab) => tab.addEventListener("click", () => switchScreen(tab.dataset.target)));
-document.querySelector("#backToChat").addEventListener("click", () => switchScreen("chatScreen"));
+tabs.forEach((tab) =>
+  tab.addEventListener("click", () => switchScreen(tab.dataset.target)),
+);
+document
+  .querySelector("#backToChat")
+  .addEventListener("click", () => switchScreen("chatScreen"));
 document.querySelector("#reviewTransactions").addEventListener("click", () => {
   switchScreen("chatScreen");
   handleMessage("Rà soát giao dịch bất thường");
