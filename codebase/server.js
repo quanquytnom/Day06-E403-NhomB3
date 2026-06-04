@@ -4,14 +4,17 @@ const { loadEnv: loadEnvFile } = require("./server/env");
 const {
   readJson: readRequestJson,
   sendJson: sendJsonResponse,
-  serveStatic: serveStaticFile
+  serveStatic: serveStaticFile,
 } = require("./server/http");
-const { buildSelectionSystemPrompt, buildFinalSystemPrompt } = require("./server/prompts");
+const {
+  buildSelectionSystemPrompt,
+  buildFinalSystemPrompt,
+} = require("./server/prompts");
 const { toolSchemas: buildToolSchemas } = require("./server/toolSchemas");
 const {
   callOpenAIForToolSelection: selectToolWithOpenAI,
   callOpenAIFinalResponse: reasonWithOpenAI,
-  normalizeToolName: normalizeSelectedToolName
+  normalizeToolName: normalizeSelectedToolName,
 } = require("./server/openaiClient");
 
 const rootDir = __dirname;
@@ -30,7 +33,7 @@ const categories = {
   Entertainment: { label: "Giải trí", limit: 1200000 },
   Family: { label: "Gia đình", limit: 1800000 },
   Debt: { label: "Trả nợ", limit: 1500000 },
-  Other: { label: "Khác", limit: 1000000 }
+  Other: { label: "Khác", limit: 1000000 },
 };
 
 const state = {
@@ -38,7 +41,9 @@ const state = {
   month: CURRENT_MONTH,
   today: new Date(2026, 5, 4, 9, 32),
   monthlyBudget: 10000000,
-  categoryBudgets: Object.fromEntries(Object.entries(categories).map(([key, value]) => [key, value.limit])),
+  categoryBudgets: Object.fromEntries(
+    Object.entries(categories).map(([key, value]) => [key, value.limit]),
+  ),
   transactions: [
     tx("Cà phê sáng", 90000, "Food", "2026-06-01"),
     tx("Siêu thị", 420000, "Shopping", "2026-06-01"),
@@ -50,9 +55,12 @@ const state = {
     tx("Ăn uống cuối tuần", 980000, "Food", "2026-06-04"),
     tx("Sách và học tập", 480000, "Education", "2026-06-04"),
     tx("Vé xem phim", 350000, "Entertainment", "2026-06-04"),
-    tx("Chuyển khoản gia đình", 1190000, "Family", "2026-06-04")
-  ]
+    tx("Chuyển khoản gia đình", 1190000, "Family", "2026-06-04"),
+  ],
 };
+
+const conversations = new Map();
+const MAX_HISTORY_MESSAGES = 12;
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -67,7 +75,7 @@ const server = http.createServer(async (req, res) => {
       sendJsonResponse(res, 200, {
         hasOpenAIKey: Boolean(env.OPENAI_API_KEY),
         model: env.OPENAI_MODEL || "gpt-4.1-mini",
-        mode: env.OPENAI_API_KEY ? "openai" : "mock"
+        mode: env.OPENAI_API_KEY ? "openai" : "mock",
       });
       return;
     }
@@ -78,8 +86,8 @@ const server = http.createServer(async (req, res) => {
     sendJsonResponse(res, 500, {
       error: {
         code: error.code || "server_error",
-        message: error.message || "Server error"
-      }
+        message: error.message || "Server error",
+      },
     });
   }
 });
@@ -88,30 +96,38 @@ server.listen(port, () => {
   console.log(`Moni prototype server: http://localhost:${port}`);
   console.log(`LLM mode: ${env.OPENAI_API_KEY ? "OpenAI" : "mock fallback"}`);
   if (!env.OPENAI_API_KEY) {
-    console.log("OPENAI_API_KEY is missing, so /api/moni/chat will use mock LLM routing.");
+    console.log(
+      "OPENAI_API_KEY is missing, so /api/moni/chat will use mock LLM routing.",
+    );
   }
 });
 
-async function handleMoniChat({ message, userId = USER_ID, month = CURRENT_MONTH }) {
+async function handleMoniChat({
+  message,
+  userId = USER_ID,
+  month = CURRENT_MONTH,
+}) {
   if (!message) {
     return {
       assistantMessage: "Bạn nhập tin nhắn trước nhé.",
       toolCalls: [],
       cards: [],
-      error: { code: "missing_message" }
+      error: { code: "missing_message" },
     };
   }
 
   const context = buildLLMContext(month);
+  const history = getConversationHistory(userId, month);
   const selectionRequest = {
     system: buildSelectionSystemPrompt(),
+    history,
     user: { message, userId, month, context },
-    tools: buildToolSchemas()
+    tools: buildToolSchemas(),
   };
 
   const selectionResponse = env.OPENAI_API_KEY
     ? await selectToolWithOpenAI({ env, request: selectionRequest })
-    : mockLLMRoute(message);
+    : mockLLMRoute(message, history);
 
   console.log("\n[Moni LLM request]");
   console.log(JSON.stringify(selectionRequest, null, 2));
@@ -119,17 +135,21 @@ async function handleMoniChat({ message, userId = USER_ID, month = CURRENT_MONTH
   console.log(JSON.stringify(selectionResponse, null, 2));
 
   if (!selectionResponse.tool) {
-    return {
-      assistantMessage: selectionResponse.assistantMessage || "Mình có thể thêm khoản chi, cập nhật ngân sách hoặc rà soát giao dịch.",
+    const response = {
+      assistantMessage:
+        selectionResponse.assistantMessage ||
+        "Mình có thể thêm khoản chi, cập nhật ngân sách hoặc rà soát giao dịch.",
       toolCalls: [],
       cards: selectionResponse.cards || [],
       intent: selectionResponse.intent,
       llmTrace: {
         mode: env.OPENAI_API_KEY ? "openai" : "server_mock",
         request: { selection: selectionRequest },
-        response: { selection: selectionResponse }
-      }
+        response: { selection: selectionResponse },
+      },
     };
+    rememberConversationTurn(userId, month, message, response.assistantMessage);
+    return response;
   }
 
   const toolName = normalizeSelectedToolName(selectionResponse.tool);
@@ -137,79 +157,150 @@ async function handleMoniChat({ message, userId = USER_ID, month = CURRENT_MONTH
     toolName,
     args: selectionResponse.arguments || {},
     message,
-    month
+    month,
   });
   const toolCall = {
     name: toolName,
-    arguments: { ...preparedArguments, userId, month: preparedArguments.month || month }
+    arguments: {
+      ...preparedArguments,
+      userId,
+      month: preparedArguments.month || month,
+    },
   };
   const toolResult = executeTool(toolName, preparedArguments);
 
   if (toolResult.needsConfirmation) {
-    return {
+    const response = {
       ...toolResult,
       toolCalls: [toolCall],
       intent: selectionResponse.intent,
       llmTrace: {
         mode: env.OPENAI_API_KEY ? "openai" : "server_mock",
         request: { selection: selectionRequest },
-        response: { selection: selectionResponse, toolResults: [{ call: toolCall, result: toolResult }] }
-      }
+        response: {
+          selection: selectionResponse,
+          toolResults: [{ call: toolCall, result: toolResult }],
+        },
+      },
     };
+    rememberConversationTurn(userId, month, message, response.assistantMessage);
+    return response;
   }
 
   const finalRequest = buildFinalReasoningRequest({
     message,
     userId,
     month,
+    history,
     context,
-    toolResults: [{ call: toolCall, result: toolResult }]
+    toolResults: [{ call: toolCall, result: toolResult }],
   });
   const finalResponse = env.OPENAI_API_KEY
     ? await reasonWithOpenAI({ env, request: finalRequest })
     : mockFinalResponse({ toolName, toolResult });
   const fallbackCards = cardsForTool(toolName, toolResult);
-  const finalCards = Array.isArray(finalResponse.cards) && finalResponse.cards.length
-    ? finalResponse.cards
-    : fallbackCards;
+  const finalCards =
+    Array.isArray(finalResponse.cards) && finalResponse.cards.length
+      ? finalResponse.cards
+      : fallbackCards;
+  const normalizedCards = finalCards.map(normalizeBudgetCardStatus);
 
-  return {
-    assistantMessage: finalResponse.assistantMessage || assistantMessageForTool(toolName, toolResult),
+  const assistantMessage =
+    finalResponse.assistantMessage ||
+    assistantMessageForTool(toolName, toolResult);
+  const response = {
+    assistantMessage,
     toolCalls: [toolCall],
-    cards: finalCards,
+    cards: normalizedCards,
     toolResult,
     intent: selectionResponse.intent,
     llmTrace: {
       mode: env.OPENAI_API_KEY ? "openai" : "server_mock",
       request: {
         selection: selectionRequest,
-        final: finalRequest
+        final: finalRequest,
       },
       response: {
         selection: selectionResponse,
         toolResults: [{ call: toolCall, result: toolResult }],
-        final: finalResponse
-      }
+        final: finalResponse,
+      },
     },
     serverState: {
       monthlyBudget: state.monthlyBudget,
       categoryBudgets: state.categoryBudgets,
-      transactions: state.transactions
-    }
+      transactions: state.transactions,
+    },
   };
+  rememberConversationTurn(userId, month, message, assistantMessage);
+  return response;
 }
 
-function buildFinalReasoningRequest({ message, userId, month, context, toolResults }) {
+function buildFinalReasoningRequest({
+  message,
+  userId,
+  month,
+  history = [],
+  context,
+  toolResults,
+}) {
   return {
     system: buildFinalSystemPrompt(),
+    history,
     user: {
       message,
       userId,
       month,
       context,
-      toolResults
-    }
+      toolResults,
+    },
   };
+}
+
+function getConversationKey(userId, month) {
+  return `${userId}:${month}`;
+}
+
+function getConversationHistory(
+  userId,
+  month,
+  maxMessages = MAX_HISTORY_MESSAGES,
+) {
+  const key = getConversationKey(userId, month);
+  return (conversations.get(key) || [])
+    .slice(-maxMessages)
+    .map((item) => ({ role: item.role, content: item.content }));
+}
+
+function appendConversationMessage(userId, month, role, content) {
+  if (!content || !["user", "assistant"].includes(role)) return;
+  const key = getConversationKey(userId, month);
+  const history = conversations.get(key) || [];
+  history.push({ role, content: String(content) });
+  conversations.set(key, history);
+  trimConversationHistory(userId, month);
+}
+
+function trimConversationHistory(
+  userId,
+  month,
+  maxMessages = MAX_HISTORY_MESSAGES,
+) {
+  const key = getConversationKey(userId, month);
+  const history = conversations.get(key) || [];
+  if (history.length > maxMessages) {
+    conversations.set(key, history.slice(-maxMessages));
+  }
+}
+
+function rememberConversationTurn(
+  userId,
+  month,
+  userMessage,
+  assistantMessage,
+) {
+  appendConversationMessage(userId, month, "user", userMessage);
+  appendConversationMessage(userId, month, "assistant", assistantMessage);
 }
 
 function executeTool(toolName, args) {
@@ -219,9 +310,9 @@ function executeTool(toolName, args) {
       error: {
         code: "unknown_tool",
         message: `Unknown tool: ${toolName}`,
-        recoverable: true
+        recoverable: true,
       },
-      cards: []
+      cards: [],
     };
   }
   try {
@@ -229,7 +320,7 @@ function executeTool(toolName, args) {
     return {
       ok: true,
       toolName,
-      ...data
+      ...data,
     };
   } catch (error) {
     return {
@@ -238,9 +329,9 @@ function executeTool(toolName, args) {
       error: {
         code: error.message || "tool_execution_failed",
         message: error.message || "Tool execution failed",
-        recoverable: true
+        recoverable: true,
       },
-      cards: []
+      cards: [],
     };
   }
 }
@@ -249,15 +340,16 @@ function prepareToolArguments({ toolName, args, message, month }) {
   if (toolName !== "advisePurchaseDecision") return args;
   const item = args.item || parsePurchaseItem(message);
   const category = args.category || parsePurchaseCategory(message);
-  const amount = Number.isFinite(args.amount) && args.amount > 0
-    ? args.amount
-    : inferPurchaseAmount(message);
+  const amount =
+    Number.isFinite(args.amount) && args.amount > 0
+      ? args.amount
+      : inferPurchaseAmount(message);
   return {
     ...args,
     item,
     amount,
     category,
-    month: args.month || month
+    month: args.month || month,
   };
 }
 
@@ -265,7 +357,9 @@ const tools = {
   addExpense({ label, amount, category, date, note }) {
     validateAmount(amount);
     category = canonicalCategory(category);
-    const transaction = tx(label, amount, category, date || todayIso(), { note });
+    const transaction = tx(label, amount, category, date || todayIso(), {
+      note,
+    });
     state.transactions.unshift(transaction);
     return { transaction, ...recalculateAfterWrite(category, transaction) };
   },
@@ -284,7 +378,7 @@ const tools = {
     return {
       categorySnapshot: snapshots.categorySnapshot,
       budgetSnapshot: snapshots.budgetSnapshot,
-      warningCard: snapshots.warningCard
+      warningCard: snapshots.warningCard,
     };
   },
 
@@ -292,15 +386,24 @@ const tools = {
     const matches = transactionId
       ? state.transactions.filter((item) => item.id === transactionId)
       : findTransactions(searchQuery);
-    if (matches.length !== 1) return lowConfidenceTransactionCard(matches, "Bạn muốn đánh dấu khoản nào?");
+    if (matches.length !== 1)
+      return lowConfidenceTransactionCard(
+        matches,
+        "Bạn muốn đánh dấu khoản nào?",
+      );
 
     const transaction = matches[0];
     transaction.exceptionType = exceptionType;
-    transaction.excludedFromForecast = ["one_time", "debt", "refund"].includes(exceptionType);
+    transaction.excludedFromForecast = ["one_time", "debt", "refund"].includes(
+      exceptionType,
+    );
     if (exceptionType === "debt") transaction.category = "Debt";
     transaction.category = canonicalCategory(transaction.category);
     transaction.updatedAt = new Date().toISOString();
-    return { transaction, ...recalculateAfterWrite(transaction.category, transaction) };
+    return {
+      transaction,
+      ...recalculateAfterWrite(transaction.category, transaction),
+    };
   },
 
   getBudgetSnapshot({ month = state.month, category } = {}) {
@@ -311,14 +414,25 @@ const tools = {
     const budgetSnapshotBefore = getBudgetSnapshot({ month });
     const candidates = state.transactions
       .filter((item) => item.date.startsWith(month))
-      .filter((item) => item.amount >= 1000000 || item.excludedFromForecast || /học phí|trả nợ|vay/i.test(item.label))
+      .filter(
+        (item) =>
+          item.amount >= 1000000 ||
+          item.excludedFromForecast ||
+          /học phí|trả nợ|vay/i.test(item.label),
+      )
       .map((item) => ({
         transactionId: item.id,
         label: item.label,
         amount: item.amount,
         category: item.category,
-        reason: item.excludedFromForecast ? "Đang được loại khỏi dự báo" : "Khoản lớn hoặc có tính chất bất thường",
-        suggestedActions: ["Đánh dấu khoản chi một lần", "Đổi danh mục", "Giữ là chi tiêu bình thường"]
+        reason: item.excludedFromForecast
+          ? "Đang được loại khỏi dự báo"
+          : "Khoản lớn hoặc có tính chất bất thường",
+        suggestedActions: [
+          "Đánh dấu khoản chi một lần",
+          "Đổi danh mục",
+          "Giữ là chi tiêu bình thường",
+        ],
       }));
 
     return {
@@ -326,7 +440,7 @@ const tools = {
       budgetSnapshotBefore,
       potentialImpact: candidates.length
         ? "Nếu loại đúng các khoản một lần, dự báo cuối tháng sẽ sát thực tế hơn."
-        : "Chưa thấy khoản nào đủ bất thường để cần rà soát."
+        : "Chưa thấy khoản nào đủ bất thường để cần rà soát.",
     };
   },
 
@@ -343,13 +457,17 @@ const tools = {
         budget: item.budget,
         remaining: item.remaining,
         riskLevel: item.riskLevel,
-        shareOfTotal: snapshot.totalSpent ? item.spent / snapshot.totalSpent : 0
+        shareOfTotal: snapshot.totalSpent
+          ? item.spent / snapshot.totalSpent
+          : 0,
       }));
 
     return {
       snapshot,
       topCategories,
-      summary: topCategories.length ? `Nhom chi cao nhat la ${topCategories[0].label}.` : "Chua co du lieu chi tieu."
+      summary: topCategories.length
+        ? `Nhom chi cao nhat la ${topCategories[0].label}.`
+        : "Chua co du lieu chi tieu.",
     };
   },
 
@@ -357,18 +475,31 @@ const tools = {
     return {
       transactions: state.transactions
         .filter((item) => item.date.startsWith(month))
-        .slice(0, limit)
+        .slice(0, limit),
     };
   },
 
-  simulateExpense({ label = "Khoan chi mo phong", amount, category = "Other", date = todayIso(), month = state.month }) {
+  simulateExpense({
+    label = "Khoan chi mo phong",
+    amount,
+    category = "Other",
+    date = todayIso(),
+    month = state.month,
+  }) {
     validateAmount(amount);
     category = canonicalCategory(category);
     const before = getBudgetSnapshot({ month });
     const simulatedTransaction = tx(label, amount, category, date);
     const simulatedTransactions = [simulatedTransaction, ...state.transactions];
-    const after = calculateSnapshotFromTransactions({ month, transactions: simulatedTransactions });
-    const categoryAfter = calculateCategorySnapshotFromTransactions({ category, month, transactions: simulatedTransactions });
+    const after = calculateSnapshotFromTransactions({
+      month,
+      transactions: simulatedTransactions,
+    });
+    const categoryAfter = calculateCategorySnapshotFromTransactions({
+      category,
+      month,
+      transactions: simulatedTransactions,
+    });
 
     return {
       simulationOnly: true,
@@ -380,12 +511,20 @@ const tools = {
         additionalSpent: amount,
         remainingChange: after.remaining - before.remaining,
         forecastChange: after.forecastEndOfMonth - before.forecastEndOfMonth,
-        overBudgetAmount: Math.max(after.forecastEndOfMonth - state.monthlyBudget, 0)
-      }
+        overBudgetAmount: Math.max(
+          after.forecastEndOfMonth - state.monthlyBudget,
+          0,
+        ),
+      },
     };
   },
 
-  advisePurchaseDecision({ item, amount, category = "Shopping", month = state.month }) {
+  advisePurchaseDecision({
+    item,
+    amount,
+    category = "Shopping",
+    month = state.month,
+  }) {
     if (!item) item = categoryLabel(category);
     validateAmount(amount);
     category = canonicalCategory(category);
@@ -405,7 +544,7 @@ const tools = {
       categorySnapshot,
       forecastAfterPurchase,
       wouldExceedCategoryBudget,
-      wouldExceedMonthlyBudget
+      wouldExceedMonthlyBudget,
     });
     const safeToSpendScore = calculateSafeToSpendScore({
       amount,
@@ -413,13 +552,14 @@ const tools = {
       categorySnapshot,
       forecastAfterPurchase,
       wouldExceedCategoryBudget,
-      wouldExceedMonthlyBudget
+      wouldExceedMonthlyBudget,
     });
-    const decision = safeToSpendScore >= 80
-      ? "recommended"
-      : safeToSpendScore >= 40
-        ? "warning"
-        : "not_recommended";
+    const decision =
+      safeToSpendScore >= 80
+        ? "recommended"
+        : safeToSpendScore >= 40
+          ? "warning"
+          : "not_recommended";
 
     return {
       decision,
@@ -442,10 +582,10 @@ const tools = {
         categorySpentAfterPurchase,
         monthlyBudget: budgetSnapshot.monthlyBudget,
         totalSpent: budgetSnapshot.totalSpent,
-        totalSpentAfterPurchase
+        totalSpentAfterPurchase,
       },
       budgetSnapshot,
-      categorySnapshot
+      categorySnapshot,
     };
   },
 
@@ -453,10 +593,13 @@ const tools = {
     const snapshot = getBudgetSnapshot({ month });
     const breakdown = tools.getSpendingBreakdown({ month });
     const elapsedRatio = daysElapsed() / daysInMonth(month);
-    const budgetUsedRatio = state.monthlyBudget ? snapshot.totalSpent / state.monthlyBudget : 0;
-    const riskReason = snapshot.riskLevel === "safe"
-      ? "Toc do chi hien tai van nam trong ngan sach."
-      : `Ban da dung ${(budgetUsedRatio * 100).toFixed(0)}% ngan sach khi thang moi di qua ${(elapsedRatio * 100).toFixed(0)}%.`;
+    const budgetUsedRatio = state.monthlyBudget
+      ? snapshot.totalSpent / state.monthlyBudget
+      : 0;
+    const riskReason =
+      snapshot.riskLevel === "safe"
+        ? "Toc do chi hien tai van nam trong ngan sach."
+        : `Ban da dung ${(budgetUsedRatio * 100).toFixed(0)}% ngan sach khi thang moi di qua ${(elapsedRatio * 100).toFixed(0)}%.`;
 
     return {
       snapshot,
@@ -465,7 +608,7 @@ const tools = {
       daysRemaining: daysLeft(),
       budgetUsedRatio,
       elapsedRatio,
-      riskReason
+      riskReason,
     };
   },
 
@@ -474,16 +617,19 @@ const tools = {
     return {
       categorySnapshot: getCategorySnapshot(category, month),
       recentTransactions: state.transactions
-        .filter((item) => item.date.startsWith(month) && item.category === category)
-        .slice(0, 5)
+        .filter(
+          (item) => item.date.startsWith(month) && item.category === category,
+        )
+        .slice(0, 5),
     };
-  }
+  },
 };
 
-function mockLLMRoute(message) {
+function mockLLMRoute(message, history = []) {
   const lower = normalize(message);
   const amount = parseAmount(message);
   const category = parseCategory(message);
+  const purchaseFollowUp = resolvePurchaseFollowUp(message, history);
 
   if (isPurchaseAdviceQuestion(lower)) {
     return {
@@ -493,28 +639,53 @@ function mockLLMRoute(message) {
         item: parsePurchaseItem(message),
         amount: amount || inferPurchaseAmount(message),
         category: parsePurchaseCategory(message),
-        month: state.month
-      }
+        month: state.month,
+      },
     };
+  }
+  if (purchaseFollowUp) {
+    return purchaseFollowUp;
   }
   if (/(neu|thi sao|gia su)/.test(lower) && amount) {
     return {
       intent: "simulate_expense",
       tool: "simulateExpense",
-      arguments: { label: parseLabel(message, category), amount, category, date: todayIso(), month: state.month }
+      arguments: {
+        label: parseLabel(message, category),
+        amount,
+        category,
+        date: todayIso(),
+        month: state.month,
+      },
     };
   }
   if (/(tai sao|vi sao|ly do|canh bao)/.test(lower)) {
-    return { intent: "get_forecast_analysis", tool: "getForecastAnalysis", arguments: { month: state.month } };
+    return {
+      intent: "get_forecast_analysis",
+      tool: "getForecastAnalysis",
+      arguments: { month: state.month },
+    };
   }
   if (/(phan bo|breakdown|nhom chi|danh muc nao|chi nhieu)/.test(lower)) {
-    return { intent: "get_spending_breakdown", tool: "getSpendingBreakdown", arguments: { month: state.month } };
+    return {
+      intent: "get_spending_breakdown",
+      tool: "getSpendingBreakdown",
+      arguments: { month: state.month },
+    };
   }
   if (/(ra soat|bat thuong|du bao sai)/.test(lower)) {
-    return { intent: "review_unusual_expenses", tool: "reviewUnusualExpenses", arguments: { month: state.month } };
+    return {
+      intent: "review_unusual_expenses",
+      tool: "reviewUnusualExpenses",
+      arguments: { month: state.month },
+    };
   }
   if (/(con bao nhieu|con lai|du bao|nguy co|tinh trang)/.test(lower)) {
-    return { intent: "get_budget_snapshot", tool: "getBudgetSnapshot", arguments: { month: state.month } };
+    return {
+      intent: "get_budget_snapshot",
+      tool: "getBudgetSnapshot",
+      arguments: { month: state.month },
+    };
   }
   if (/(chi mot lan|tra no|hoan tien|binh thuong|cu tinh)/.test(lower)) {
     return {
@@ -522,54 +693,155 @@ function mockLLMRoute(message) {
       tool: "markExpenseException",
       arguments: {
         searchQuery: message,
-        exceptionType: lower.includes("tra no") ? "debt" : lower.includes("binh thuong") ? "normal" : "one_time"
-      }
+        exceptionType: lower.includes("tra no")
+          ? "debt"
+          : lower.includes("binh thuong")
+            ? "normal"
+            : "one_time",
+      },
     };
   }
   if (/(ngan sach)/.test(lower) && amount) {
-    if (/(an uong|di chuyen|mua sam|hoc|giai tri|hoa don|gia dinh)/.test(lower)) {
-      return { intent: "update_category_budget", tool: "updateCategoryBudget", arguments: { category, amount, month: state.month } };
+    if (
+      /(an uong|di chuyen|mua sam|hoc|giai tri|hoa don|gia dinh)/.test(lower)
+    ) {
+      return {
+        intent: "update_category_budget",
+        tool: "updateCategoryBudget",
+        arguments: { category, amount, month: state.month },
+      };
     }
-    return { intent: "update_monthly_budget", tool: "updateMonthlyBudget", arguments: { amount, month: state.month } };
+    return {
+      intent: "update_monthly_budget",
+      tool: "updateMonthlyBudget",
+      arguments: { amount, month: state.month },
+    };
   }
   if (/(them|ghi|toi vua|khoan|chi|tra tien)/.test(lower)) {
     if (!amount) {
       return {
         intent: "low_confidence_write",
-        assistantMessage: "Mình chưa đọc được số tiền. Bạn gửi lại theo mẫu như: Thêm ăn tối 80k nhé.",
-        cards: []
+        assistantMessage:
+          "Mình chưa đọc được số tiền. Bạn gửi lại theo mẫu như: Thêm ăn tối 80k nhé.",
+        cards: [],
       };
     }
     return {
       intent: "add_expense",
       tool: "addExpense",
-      arguments: { label: parseLabel(message, category), amount, category, date: todayIso() }
+      arguments: {
+        label: parseLabel(message, category),
+        amount,
+        category,
+        date: todayIso(),
+      },
     };
   }
   return {
     intent: "small_talk_or_help",
-    assistantMessage: "Mình có thể thêm khoản chi, cập nhật ngân sách, rà soát giao dịch bất thường và dự báo ngân sách."
+    assistantMessage:
+      "Mình có thể thêm khoản chi, cập nhật ngân sách, rà soát giao dịch bất thường và dự báo ngân sách.",
   };
 }
 
-function getBudgetSnapshot({ month = state.month, category } = {}) {
-  return calculateSnapshotFromTransactions({ month, category, transactions: state.transactions });
+function resolvePurchaseFollowUp(message, history = []) {
+  const lower = normalize(message);
+  const amount = parseAmount(message);
+  const isFollowUp = /(neu|thi sao|gia|giam|con|re hon|thap hon|tra gop)/.test(
+    lower,
+  );
+  if (!isFollowUp) return null;
+
+  const topic = findLastPurchaseTopic(history);
+  if (!topic) return null;
+  if (!amount) {
+    return {
+      intent: "low_confidence_purchase_advice",
+      assistantMessage: `Mình hiểu bạn vẫn đang nói về ${topic.item}. Bạn cho mình biết số tiền hoặc khoản trả góp mỗi tháng là bao nhiêu để mình tính lại nhé.`,
+      cards: [],
+    };
+  }
+
+  return {
+    intent: "purchase_decision_advice",
+    tool: "advisePurchaseDecision",
+    arguments: {
+      item: topic.item,
+      amount,
+      category: topic.category,
+      month: state.month,
+    },
+  };
 }
 
-function calculateSnapshotFromTransactions({ month = state.month, category, transactions }) {
-  const monthTransactions = transactions.filter((item) => item.date.startsWith(month));
-  const totalSpent = monthTransactions.reduce((sum, item) => sum + item.amount, 0);
-  const forecastBase = monthTransactions.filter((item) => !item.excludedFromForecast).reduce((sum, item) => sum + item.amount, 0);
+function findLastPurchaseTopic(history = []) {
+  return history
+    .slice()
+    .reverse()
+    .map((item) => item.content || "")
+    .find((content) => isPurchaseTopicText(content))
+    ? (() => {
+        const content = history
+          .slice()
+          .reverse()
+          .map((item) => item.content || "")
+          .find((text) => isPurchaseTopicText(text));
+        return {
+          item: parsePurchaseItem(content),
+          category: parsePurchaseCategory(content),
+        };
+      })()
+    : null;
+}
+
+function isPurchaseTopicText(text) {
+  const lower = normalize(text);
+  return (
+    isPurchaseAdviceQuestion(lower) ||
+    /(muon mua|dinh mua|mua).+(trieu|k|nghin|dong)/.test(lower)
+  );
+}
+
+function getBudgetSnapshot({ month = state.month, category } = {}) {
+  return calculateSnapshotFromTransactions({
+    month,
+    category,
+    transactions: state.transactions,
+  });
+}
+
+function calculateSnapshotFromTransactions({
+  month = state.month,
+  category,
+  transactions,
+}) {
+  const monthTransactions = transactions.filter((item) =>
+    item.date.startsWith(month),
+  );
+  const totalSpent = monthTransactions.reduce(
+    (sum, item) => sum + item.amount,
+    0,
+  );
+  const forecastBase = monthTransactions
+    .filter((item) => !item.excludedFromForecast)
+    .reduce((sum, item) => sum + item.amount, 0);
   const dailySpendingRate = forecastBase / daysElapsed();
   const forecastEndOfMonth = dailySpendingRate * daysInMonth(month);
   const remaining = state.monthlyBudget - totalSpent;
-  const recommendedDailySpend = Math.max(remaining, 0) / Math.max(daysLeft(), 1);
-  const riskLevel = totalSpent > state.monthlyBudget || forecastEndOfMonth > state.monthlyBudget
-    ? "danger"
-    : forecastEndOfMonth > state.monthlyBudget * 0.9
-      ? "warning"
-      : "safe";
-  const categoryBreakdown = Object.keys(categories).map((key) => calculateCategorySnapshotFromTransactions({ category: key, month, transactions }));
+  const recommendedDailySpend =
+    Math.max(remaining, 0) / Math.max(daysLeft(), 1);
+  const riskStatus = getBudgetRiskStatus({
+    spent: totalSpent,
+    budget: state.monthlyBudget,
+    forecastEndOfMonth,
+  });
+  const categoryBreakdown = Object.keys(categories).map((key) =>
+    calculateCategorySnapshotFromTransactions({
+      category: key,
+      month,
+      transactions,
+    }),
+  );
 
   return {
     month,
@@ -579,149 +851,276 @@ function calculateSnapshotFromTransactions({ month = state.month, category, tran
     dailySpendingRate,
     forecastEndOfMonth,
     recommendedDailySpend,
-    riskLevel,
-    categoryBreakdown: category ? categoryBreakdown.filter((item) => item.category === category) : categoryBreakdown,
-    recentTransactions: monthTransactions.slice(0, 8)
+    riskLevel: riskStatus.riskLevel,
+    riskLabel: riskStatus.riskLabel,
+    riskReason: riskStatus.riskReason,
+    categoryBreakdown: category
+      ? categoryBreakdown.filter((item) => item.category === category)
+      : categoryBreakdown,
+    recentTransactions: monthTransactions.slice(0, 8),
   };
 }
 
 function getCategorySnapshot(category, month) {
-  return calculateCategorySnapshotFromTransactions({ category, month, transactions: state.transactions });
+  return calculateCategorySnapshotFromTransactions({
+    category,
+    month,
+    transactions: state.transactions,
+  });
 }
 
-function calculateCategorySnapshotFromTransactions({ category, month, transactions }) {
+function calculateCategorySnapshotFromTransactions({
+  category,
+  month,
+  transactions,
+}) {
   const spent = transactions
     .filter((item) => item.category === category && item.date.startsWith(month))
     .reduce((sum, item) => sum + item.amount, 0);
   const forecastBase = transactions
-    .filter((item) => item.category === category && item.date.startsWith(month) && !item.excludedFromForecast)
+    .filter(
+      (item) =>
+        item.category === category &&
+        item.date.startsWith(month) &&
+        !item.excludedFromForecast,
+    )
     .reduce((sum, item) => sum + item.amount, 0);
   const budget = state.categoryBudgets[category] || categories.Other.limit;
-  const forecastEndOfMonth = (forecastBase / daysElapsed()) * daysInMonth(month);
+  const forecastEndOfMonth =
+    (forecastBase / daysElapsed()) * daysInMonth(month);
   const remaining = budget - spent;
-  const riskLevel = spent > budget || forecastEndOfMonth > budget
-    ? "danger"
-    : forecastEndOfMonth > budget * 0.9
-      ? "warning"
-      : "safe";
-  return { category, label: categoryLabel(category), budget, spent, remaining, forecastEndOfMonth, riskLevel };
+  const riskStatus = getBudgetRiskStatus({
+    spent,
+    budget,
+    forecastEndOfMonth,
+    subject: categoryLabel(category),
+  });
+  return {
+    category,
+    label: categoryLabel(category),
+    budget,
+    spent,
+    remaining,
+    forecastEndOfMonth,
+    riskLevel: riskStatus.riskLevel,
+    riskLabel: riskStatus.riskLabel,
+    riskReason: riskStatus.riskReason,
+  };
 }
 
 function recalculateAfterWrite(category, triggerTransaction) {
   const budgetSnapshot = getBudgetSnapshot({ month: state.month });
-  const categorySnapshot = category ? getCategorySnapshot(category, state.month) : undefined;
-  const warningCard = generateCard({ budgetSnapshot, categorySnapshot, triggerTransaction });
+  const categorySnapshot = category
+    ? getCategorySnapshot(category, state.month)
+    : undefined;
+  const warningCard = generateCard({
+    budgetSnapshot,
+    categorySnapshot,
+    triggerTransaction,
+  });
   return { budgetSnapshot, categorySnapshot, warningCard };
 }
 
-function generateCard({ budgetSnapshot, categorySnapshot, triggerTransaction }) {
+function generateCard({
+  budgetSnapshot,
+  categorySnapshot,
+  triggerTransaction,
+}) {
   if (categorySnapshot) {
     return {
       type: "category_budget",
       riskLevel: categorySnapshot.riskLevel,
+      riskLabel: categorySnapshot.riskLabel,
+      title: `Ngân sách ${categorySnapshot.label}`,
       title: `Ngân sách ${categorySnapshot.label}`,
       metrics: {
         budget: categorySnapshot.budget,
         spent: categorySnapshot.spent,
         remaining: categorySnapshot.remaining,
-        forecast: categorySnapshot.forecastEndOfMonth
+        forecast: categorySnapshot.forecastEndOfMonth,
       },
       explanation: `${categorySnapshot.label} hiện ở trạng thái ${riskText(categorySnapshot.riskLevel).toLowerCase()}.`,
-      actions: defaultActions(categorySnapshot.category, triggerTransaction)
+      explanation: categorySnapshot.riskReason,
+      actions: defaultActions(categorySnapshot.category, triggerTransaction),
     };
   }
   return {
     type: "budget",
     riskLevel: budgetSnapshot.riskLevel,
-    title: budgetSnapshot.riskLevel === "safe" ? "Ngân sách khỏe" : "Nguy cơ vượt ngân sách",
+    riskLabel:
+      budgetSnapshot.riskLevel === "danger"
+        ? "Đã vượt"
+        : budgetSnapshot.riskLevel === "warning"
+          ? "Cảnh báo vượt"
+          : "An toàn",
+    title:
+      budgetSnapshot.riskLevel === "safe"
+        ? "Ngân sách khỏe"
+        : "Nguy cơ vượt ngân sách",
+    title:
+      budgetSnapshot.riskLevel === "danger"
+        ? "Đã vượt ngân sách"
+        : budgetSnapshot.riskLevel === "warning"
+          ? "Nguy cơ vượt ngân sách"
+          : "Ngân sách khỏe",
     metrics: {
       budget: budgetSnapshot.monthlyBudget,
       spent: budgetSnapshot.totalSpent,
       remaining: budgetSnapshot.remaining,
-      forecast: budgetSnapshot.forecastEndOfMonth
+      forecast: budgetSnapshot.forecastEndOfMonth,
     },
     explanation: `Ngân sách tháng hiện ở trạng thái ${riskText(budgetSnapshot.riskLevel).toLowerCase()}.`,
-    actions: defaultActions(triggerTransaction?.category, triggerTransaction)
+    explanation: budgetSnapshot.riskReason,
+    actions: defaultActions(triggerTransaction?.category, triggerTransaction),
+  };
+}
+
+function normalizeBudgetCardStatus(card) {
+  const metrics = card?.metrics || {};
+  if (
+    !Number.isFinite(metrics.budget) ||
+    !Number.isFinite(metrics.spent) ||
+    !Number.isFinite(metrics.forecast)
+  ) {
+    return card;
+  }
+  const status = getBudgetRiskStatus({
+    budget: metrics.budget,
+    spent: metrics.spent,
+    forecastEndOfMonth: metrics.forecast,
+  });
+  return {
+    ...card,
+    riskLevel: status.riskLevel,
+    riskLabel:
+      status.riskLevel === "danger"
+        ? "Đã vượt"
+        : status.riskLevel === "warning"
+          ? status.riskLabel.replace(" ngân sách", "")
+          : status.riskLabel,
+    explanation: status.riskReason || card.explanation,
   };
 }
 
 function defaultActions(category, triggerTransaction) {
   const actions = [
-    { label: "Xem chi tiết", actionType: "open_dashboard", payload: { category } },
-    { label: "Rà soát giao dịch", actionType: "tool_call", payload: { tool: "reviewUnusualExpenses", arguments: { month: state.month } } },
-    { label: "Điều chỉnh ngân sách", actionType: "prompt", payload: { message: category ? `Cập nhật ngân sách ${categoryLabel(category)} lên 3 triệu` : "Tăng ngân sách tháng này lên 12 triệu" } }
+    {
+      label: "Xem chi tiết",
+      actionType: "open_dashboard",
+      payload: { category },
+    },
+    {
+      label: "Rà soát giao dịch",
+      actionType: "tool_call",
+      payload: {
+        tool: "reviewUnusualExpenses",
+        arguments: { month: state.month },
+      },
+    },
+    {
+      label: "Điều chỉnh ngân sách",
+      actionType: "prompt",
+      payload: {
+        message: category
+          ? `Cập nhật ngân sách ${categoryLabel(category)} lên 3 triệu`
+          : "Tăng ngân sách tháng này lên 12 triệu",
+      },
+    },
   ];
   if (triggerTransaction) {
     actions.push({
       label: "Đánh dấu khoản chi một lần",
       actionType: "tool_call",
-      payload: { tool: "markExpenseException", arguments: { transactionId: triggerTransaction.id, exceptionType: "one_time" } }
+      payload: {
+        tool: "markExpenseException",
+        arguments: {
+          transactionId: triggerTransaction.id,
+          exceptionType: "one_time",
+        },
+      },
     });
   }
   return actions;
 }
 
 function cardsForTool(tool, result) {
-  if (["addExpense", "updateMonthlyBudget", "updateCategoryBudget", "markExpenseException"].includes(tool)) {
+  if (
+    [
+      "addExpense",
+      "updateMonthlyBudget",
+      "updateCategoryBudget",
+      "markExpenseException",
+    ].includes(tool)
+  ) {
     return [result.warningCard].filter(Boolean);
   }
-  if (tool === "getBudgetSnapshot") return [generateCard({ budgetSnapshot: result })];
+  if (tool === "getBudgetSnapshot")
+    return [generateCard({ budgetSnapshot: result })];
   if (tool === "reviewUnusualExpenses") {
-    return [{
-      type: "review",
-      riskLevel: result.candidates.length ? "warning" : "safe",
-      title: "Rà soát giao dịch",
-      explanation: result.potentialImpact,
-      candidates: result.candidates,
-      actions: []
-    }];
+    return [
+      {
+        type: "review",
+        riskLevel: result.candidates.length ? "warning" : "safe",
+        title: "Rà soát giao dịch",
+        explanation: result.potentialImpact,
+        candidates: result.candidates,
+        actions: [],
+      },
+    ];
   }
   if (tool === "getSpendingBreakdown") {
-    return [{
-      type: "spending_breakdown",
-      riskLevel: result.snapshot.riskLevel,
-      title: "Phân bổ chi tiêu",
-      explanation: result.summary,
-      data: { topCategories: result.topCategories },
-      actions: defaultActions()
-    }];
+    return [
+      {
+        type: "spending_breakdown",
+        riskLevel: result.snapshot.riskLevel,
+        title: "Phân bổ chi tiêu",
+        explanation: result.summary,
+        data: { topCategories: result.topCategories },
+        actions: defaultActions(),
+      },
+    ];
   }
   if (tool === "getForecastAnalysis") {
-    return [{
-      type: "forecast_analysis",
-      riskLevel: result.snapshot.riskLevel,
-      title: "Phân tích cảnh báo",
-      explanation: result.riskReason,
-      data: {
-        daysElapsed: result.daysElapsed,
-        daysRemaining: result.daysRemaining,
-        topCategories: result.topCategories,
-        forecastEndOfMonth: result.snapshot.forecastEndOfMonth
+    return [
+      {
+        type: "forecast_analysis",
+        riskLevel: result.snapshot.riskLevel,
+        title: "Phân tích cảnh báo",
+        explanation: result.riskReason,
+        data: {
+          daysElapsed: result.daysElapsed,
+          daysRemaining: result.daysRemaining,
+          topCategories: result.topCategories,
+          forecastEndOfMonth: result.snapshot.forecastEndOfMonth,
+        },
+        actions: defaultActions(),
       },
-      actions: defaultActions()
-    }];
+    ];
   }
   if (tool === "simulateExpense") {
-    return [{
-      type: "simulation_result",
-      riskLevel: result.after.riskLevel,
-      title: "Mô phỏng khoản chi",
-      explanation: `Khoản chi này không được ghi vào dữ liệu thật. Dự báo thay đổi ${money(result.impact.forecastChange)}.`,
-      data: {
-        simulatedTransaction: result.simulatedTransaction,
-        before: result.before,
-        after: result.after,
-        impact: result.impact
+    return [
+      {
+        type: "simulation_result",
+        riskLevel: result.after.riskLevel,
+        title: "Mô phỏng khoản chi",
+        explanation: `Khoản chi này không được ghi vào dữ liệu thật. Dự báo thay đổi ${money(result.impact.forecastChange)}.`,
+        data: {
+          simulatedTransaction: result.simulatedTransaction,
+          before: result.before,
+          after: result.after,
+          impact: result.impact,
+        },
+        actions: defaultActions(result.simulatedTransaction.category),
       },
-      actions: defaultActions(result.simulatedTransaction.category)
-    }];
+    ];
   }
   if (tool === "advisePurchaseDecision") {
-    const riskLevel = result.decision === "recommended"
-      ? "safe"
-      : result.decision === "warning"
-        ? "warning"
-        : "danger";
+    const riskLevel =
+      result.decision === "recommended"
+        ? "safe"
+        : result.decision === "warning"
+          ? "warning"
+          : "danger";
     const categoryLabelText = categoryLabel(result.category);
     const explanation = result.reasoning.wouldExceedCategoryBudget
       ? `Khoản mua này có thể khiến bạn vượt ngân sách ${categoryLabelText}.`
@@ -729,47 +1128,51 @@ function cardsForTool(tool, result) {
         ? "Khoản mua này có thể khiến bạn vượt ngân sách tháng."
         : "Khoản mua này vẫn nằm trong phần ngân sách còn lại.";
 
-    return [{
-      type: "purchase_advice",
-      riskLevel,
-      title: "Đánh giá khoản mua",
-      explanation,
-      data: {
-        decision: result.decision,
-        safeToSpendScore: result.reasoning.safeToSpendScore,
-        purchaseAmount: result.amount,
-        remainingBudget: result.reasoning.remainingMonthlyBudget,
-        remainingCategoryBudget: result.reasoning.remainingCategoryBudget,
-        forecastAfterPurchase: result.reasoning.forecastAfterPurchase,
-        wouldExceedCategoryBudget: result.reasoning.wouldExceedCategoryBudget,
-        wouldExceedMonthlyBudget: result.reasoning.wouldExceedMonthlyBudget
+    return [
+      {
+        type: "purchase_advice",
+        riskLevel,
+        title: "Đánh giá khoản mua",
+        explanation,
+        data: {
+          decision: result.decision,
+          safeToSpendScore: result.reasoning.safeToSpendScore,
+          purchaseAmount: result.amount,
+          remainingBudget: result.reasoning.remainingMonthlyBudget,
+          remainingCategoryBudget: result.reasoning.remainingCategoryBudget,
+          forecastAfterPurchase: result.reasoning.forecastAfterPurchase,
+          wouldExceedCategoryBudget: result.reasoning.wouldExceedCategoryBudget,
+          wouldExceedMonthlyBudget: result.reasoning.wouldExceedMonthlyBudget,
+        },
+        actions: [
+          {
+            label: "Mô phỏng chi tiết",
+            actionType: "tool_call",
+            payload: {
+              tool: "simulateExpense",
+              arguments: {
+                label: result.item,
+                amount: result.amount,
+                category: result.category,
+                month: state.month,
+              },
+            },
+          },
+        ],
       },
-      actions: [
-        {
-          label: "Mô phỏng chi tiết",
-          actionType: "tool_call",
-          payload: {
-            tool: "simulateExpense",
-            arguments: {
-              label: result.item,
-              amount: result.amount,
-              category: result.category,
-              month: state.month
-            }
-          }
-        }
-      ]
-    }];
+    ];
   }
   if (tool === "getCategorySummary") {
-    return [{
-      type: "category_summary",
-      riskLevel: result.categorySnapshot.riskLevel,
-      title: `Tổng quan ${result.categorySnapshot.label}`,
-      explanation: `${result.categorySnapshot.label} đã chi ${money(result.categorySnapshot.spent)}.`,
-      data: result,
-      actions: defaultActions(result.categorySnapshot.category)
-    }];
+    return [
+      {
+        type: "category_summary",
+        riskLevel: result.categorySnapshot.riskLevel,
+        title: `Tổng quan ${result.categorySnapshot.label}`,
+        explanation: `${result.categorySnapshot.label} đã chi ${money(result.categorySnapshot.spent)}.`,
+        data: result,
+        actions: defaultActions(result.categorySnapshot.category),
+      },
+    ];
   }
   return [];
 }
@@ -779,34 +1182,45 @@ function assistantMessageForTool(tool, result) {
     const item = result.transaction;
     return `Đã ghi nhận ${item.label} ${money(item.amount)} vào ${categoryLabel(item.category)}.`;
   }
-  if (tool === "updateMonthlyBudget") return `Đã cập nhật ngân sách tháng này thành ${money(result.monthlyBudget)}.`;
+  if (tool === "updateMonthlyBudget")
+    return `Đã cập nhật ngân sách tháng này thành ${money(result.monthlyBudget)}.`;
   if (tool === "updateCategoryBudget") {
     const item = result.categorySnapshot;
     return `Đã cập nhật ngân sách ${item.label} thành ${money(item.budget)}. Hiện bạn đã chi ${money(item.spent)}, còn lại ${money(item.remaining)}.`;
   }
-  if (tool === "markExpenseException") return `Đã cập nhật trạng thái ngoại lệ cho ${result.transaction.label}.`;
-  if (tool === "getBudgetSnapshot") return `Tháng này bạn còn ${money(result.remaining)}. Dự báo cuối tháng là ${money(result.forecastEndOfMonth)}.`;
-  if (tool === "reviewUnusualExpenses") return result.candidates.length ? `Mình tìm thấy ${result.candidates.length} khoản nên rà soát.` : "Chưa thấy khoản bất thường rõ ràng.";
+  if (tool === "markExpenseException")
+    return `Đã cập nhật trạng thái ngoại lệ cho ${result.transaction.label}.`;
+  if (tool === "getBudgetSnapshot")
+    return `Tháng này bạn còn ${money(result.remaining)}. Dự báo cuối tháng là ${money(result.forecastEndOfMonth)}.`;
+  if (tool === "reviewUnusualExpenses")
+    return result.candidates.length
+      ? `Mình tìm thấy ${result.candidates.length} khoản nên rà soát.`
+      : "Chưa thấy khoản bất thường rõ ràng.";
   if (tool === "getSpendingBreakdown") return result.summary;
   if (tool === "getForecastAnalysis") return result.riskReason;
-  if (tool === "simulateExpense") return `Nếu thêm ${money(result.simulatedTransaction.amount)}, dự báo cuối tháng sẽ là ${money(result.after.forecastEndOfMonth)}.`;
+  if (tool === "simulateExpense")
+    return `Nếu thêm ${money(result.simulatedTransaction.amount)}, dự báo cuối tháng sẽ là ${money(result.after.forecastEndOfMonth)}.`;
   if (tool === "advisePurchaseDecision") {
     const score = result.reasoning.safeToSpendScore;
-    const advice = result.decision === "recommended"
-      ? "Mình đánh giá khoản mua này khá an toàn."
-      : result.decision === "warning"
-        ? "Mình khuyên bạn cân nhắc hoặc tìm lựa chọn rẻ hơn."
-        : "Mình không khuyên mua lúc này.";
+    const advice =
+      result.decision === "recommended"
+        ? "Mình đánh giá khoản mua này khá an toàn."
+        : result.decision === "warning"
+          ? "Mình khuyên bạn cân nhắc hoặc tìm lựa chọn rẻ hơn."
+          : "Mình không khuyên mua lúc này.";
     return `${advice} Safe To Spend Score: ${score}/100.`;
   }
-  if (tool === "getCategorySummary") return `${result.categorySnapshot.label} đã chi ${money(result.categorySnapshot.spent)} / ${money(result.categorySnapshot.budget)}.`;
+  if (tool === "getCategorySummary")
+    return `${result.categorySnapshot.label} đã chi ${money(result.categorySnapshot.spent)} / ${money(result.categorySnapshot.budget)}.`;
   return "Đã xử lý xong.";
 }
 
 function buildLLMContext(month) {
   const snap = getBudgetSnapshot({ month });
   const breakdown = tools.getSpendingBreakdown({ month });
-  const exceptions = state.transactions.filter((item) => item.excludedFromForecast && item.date.startsWith(month));
+  const exceptions = state.transactions.filter(
+    (item) => item.excludedFromForecast && item.date.startsWith(month),
+  );
   return {
     currentMonth: month,
     monthlyBudget: snap.monthlyBudget,
@@ -818,22 +1232,24 @@ function buildLLMContext(month) {
     recommendedDailySpend: snap.recommendedDailySpend,
     forecastEndOfMonth: snap.forecastEndOfMonth,
     riskLevel: snap.riskLevel,
+    riskLabel: snap.riskLabel,
+    riskReason: snap.riskReason,
     topCategories: breakdown.topCategories,
     purchaseAdviceSignals: {
       safeToSpendThresholds: {
         safe: 80,
         mostlySafe: 60,
         warning: 40,
-        highRisk: 20
+        highRisk: 20,
       },
-      defaultPurchaseCategory: "Shopping"
+      defaultPurchaseCategory: "Shopping",
     },
     exceptionTransactions: exceptions.map((item) => ({
       id: item.id,
       label: item.label,
       amount: item.amount,
       category: item.category,
-      exceptionType: item.exceptionType
+      exceptionType: item.exceptionType,
     })),
     riskReason: tools.getForecastAnalysis({ month }).riskReason,
     categories: snap.categoryBreakdown.map((item) => ({
@@ -842,15 +1258,17 @@ function buildLLMContext(month) {
       budget: item.budget,
       spent: item.spent,
       remaining: item.remaining,
-      riskLevel: item.riskLevel
+      riskLevel: item.riskLevel,
+      riskLabel: item.riskLabel,
+      riskReason: item.riskReason,
     })),
     recentTransactions: snap.recentTransactions.map((item) => ({
       id: item.id,
       label: item.label,
       amount: item.amount,
       category: item.category,
-      date: item.date
-    }))
+      date: item.date,
+    })),
   };
 }
 
@@ -867,7 +1285,7 @@ function tx(label, amount, category, date, options = {}) {
     exceptionType: options.exceptionType || "normal",
     excludedFromForecast: Boolean(options.excludedFromForecast),
     createdAt: now,
-    updatedAt: now
+    updatedAt: now,
   };
 }
 
@@ -877,7 +1295,8 @@ function parseAmount(text) {
   if (!match) return null;
   const value = Number(match[1]);
   if (normalized.includes("trieu")) return value * 1000000;
-  if (normalized.includes("nghin") || normalized.includes("k")) return value * 1000;
+  if (normalized.includes("nghin") || normalized.includes("k"))
+    return value * 1000;
   return value;
 }
 
@@ -888,20 +1307,28 @@ function parseCategory(text) {
   if (/(taxi|xe|di chuyen|bus|grab)/.test(lower)) return "Transport";
   if (/(hoc|hoc phi|sach|giao duc)/.test(lower)) return "Education";
   if (/(no|vay|tra no)/.test(lower)) return "Debt";
-  if (/(mua|shopping|sieu thi|tai nghe|dien thoai|laptop|ban phim|pc|nang cap|chatgpt|plus|du lich)/.test(lower)) return "Shopping";
+  if (
+    /(mua|shopping|sieu thi|tai nghe|dien thoai|laptop|ban phim|pc|nang cap|chatgpt|plus|du lich)/.test(
+      lower,
+    )
+  )
+    return "Shopping";
   return "Other";
 }
 
 function canonicalCategory(value) {
   const normalized = normalize(value || "");
-  const direct = Object.keys(categories).find((key) => key.toLowerCase() === String(value || "").toLowerCase());
+  const direct = Object.keys(categories).find(
+    (key) => key.toLowerCase() === String(value || "").toLowerCase(),
+  );
   if (direct) return direct;
   if (/(an uong|food|an|com|cafe|ca phe)/.test(normalized)) return "Food";
   if (/(hoa don|bill|dien|nuoc)/.test(normalized)) return "Bills";
   if (/(di chuyen|transport|taxi|grab|xe)/.test(normalized)) return "Transport";
   if (/(mua sam|shopping|sieu thi)/.test(normalized)) return "Shopping";
   if (/(hoc|education|hoc tap|hoc phi)/.test(normalized)) return "Education";
-  if (/(giai tri|entertainment|phim|nhac)/.test(normalized)) return "Entertainment";
+  if (/(giai tri|entertainment|phim|nhac)/.test(normalized))
+    return "Entertainment";
   if (/(gia dinh|family)/.test(normalized)) return "Family";
   if (/(tra no|debt|no|vay)/.test(normalized)) return "Debt";
   return "Other";
@@ -917,7 +1344,9 @@ function parseLabel(text, category) {
 }
 
 function isPurchaseAdviceQuestion(normalizedText) {
-  return /(co nen mua|nen mua khong|co nen dang ky|co nen di du lich|co nen nang cap|co nen chi|co nen tra tien)/.test(normalizedText);
+  return /(co nen mua|nen mua khong|co nen dang ky|co nen di du lich|co nen nang cap|co nen chi|co nen tra tien)/.test(
+    normalizedText,
+  );
 }
 
 function parsePurchaseItem(text) {
@@ -929,7 +1358,9 @@ function parsePurchaseItem(text) {
     /co nen di du lich (.+?)(?: \d| khong| không|\?|$)/,
     /co nen nang cap (.+?)(?: \d| khong| không|\?|$)/,
     /co nen chi (.+?)(?: \d| khong| không|\?|$)/,
-    /co nen tra tien (.+?)(?: \d| khong| không|\?|$)/
+    /co nen tra tien (.+?)(?: \d| khong| không|\?|$)/,
+    /muon mua (.+?)(?: \d| khong| không|\?|$)/,
+    /dinh mua (.+?)(?: \d| khong| không|\?|$)/,
   ];
   const match = patterns.map((pattern) => lower.match(pattern)).find(Boolean);
   if (!match) return parseLabel(text, parseCategory(text));
@@ -938,9 +1369,16 @@ function parsePurchaseItem(text) {
 
 function parsePurchaseCategory(text) {
   const lower = normalize(text);
-  if (/(du lich|da nang|hotel|ve may bay|khach san)/.test(lower)) return "Entertainment";
-  if (/(chatgpt|plus|dang ky|subscription|phan mem|software)/.test(lower)) return "Education";
-  if (/(dien thoai|tai nghe|laptop|ban phim|pc|nang cap|may tinh|tablet)/.test(lower)) return "Shopping";
+  if (/(du lich|da nang|hotel|ve may bay|khach san)/.test(lower))
+    return "Entertainment";
+  if (/(chatgpt|plus|dang ky|subscription|phan mem|software)/.test(lower))
+    return "Education";
+  if (
+    /(dien thoai|tai nghe|laptop|ban phim|pc|nang cap|may tinh|tablet)/.test(
+      lower,
+    )
+  )
+    return "Shopping";
   return parseCategory(text);
 }
 
@@ -963,7 +1401,14 @@ function titleCaseVietnamese(value) {
     .join(" ");
 }
 
-function calculateSafeToSpendScore({ amount, budgetSnapshot, categorySnapshot, forecastAfterPurchase, wouldExceedCategoryBudget, wouldExceedMonthlyBudget }) {
+function calculateSafeToSpendScore({
+  amount,
+  budgetSnapshot,
+  categorySnapshot,
+  forecastAfterPurchase,
+  wouldExceedCategoryBudget,
+  wouldExceedMonthlyBudget,
+}) {
   let score = 100;
   const monthlyUsageAfter = budgetSnapshot.monthlyBudget
     ? (budgetSnapshot.totalSpent + amount) / budgetSnapshot.monthlyBudget
@@ -971,8 +1416,12 @@ function calculateSafeToSpendScore({ amount, budgetSnapshot, categorySnapshot, f
   const categoryUsageAfter = categorySnapshot.budget
     ? (categorySnapshot.spent + amount) / categorySnapshot.budget
     : 1;
-  const purchaseMonthlyShare = budgetSnapshot.monthlyBudget ? amount / budgetSnapshot.monthlyBudget : 1;
-  const remainingMonthlyShare = budgetSnapshot.monthlyBudget ? budgetSnapshot.remaining / budgetSnapshot.monthlyBudget : 0;
+  const purchaseMonthlyShare = budgetSnapshot.monthlyBudget
+    ? amount / budgetSnapshot.monthlyBudget
+    : 1;
+  const remainingMonthlyShare = budgetSnapshot.monthlyBudget
+    ? budgetSnapshot.remaining / budgetSnapshot.monthlyBudget
+    : 0;
 
   score -= Math.max(0, monthlyUsageAfter - 0.7) * 70;
   score -= Math.max(0, categoryUsageAfter - 0.8) * 45;
@@ -987,44 +1436,68 @@ function calculateSafeToSpendScore({ amount, budgetSnapshot, categorySnapshot, f
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-function determineAdditionalPurchaseRisk({ amount, budgetSnapshot, categorySnapshot, forecastAfterPurchase, wouldExceedCategoryBudget, wouldExceedMonthlyBudget }) {
+function determineAdditionalPurchaseRisk({
+  amount,
+  budgetSnapshot,
+  categorySnapshot,
+  forecastAfterPurchase,
+  wouldExceedCategoryBudget,
+  wouldExceedMonthlyBudget,
+}) {
   const reasons = [];
   if (wouldExceedCategoryBudget) reasons.push("category_budget_exceeded");
   if (wouldExceedMonthlyBudget) reasons.push("monthly_remaining_exceeded");
-  if (forecastAfterPurchase > budgetSnapshot.monthlyBudget) reasons.push("forecast_over_monthly_budget");
-  if (categorySnapshot.budget && amount / categorySnapshot.budget > 0.5) reasons.push("large_vs_category_budget");
+  if (forecastAfterPurchase > budgetSnapshot.monthlyBudget)
+    reasons.push("forecast_over_monthly_budget");
+  if (categorySnapshot.budget && amount / categorySnapshot.budget > 0.5)
+    reasons.push("large_vs_category_budget");
   if (!reasons.length) reasons.push("no_major_new_risk");
   return reasons;
 }
 
 function findTransactions(searchQuery) {
   const normalized = normalize(searchQuery || "");
-  return state.transactions.filter((item) => normalized.includes(normalize(item.label)));
+  return state.transactions.filter((item) =>
+    normalized.includes(normalize(item.label)),
+  );
 }
 
 function lowConfidenceTransactionCard(matches, title) {
   return {
     needsConfirmation: true,
-    assistantMessage: matches.length ? `Mình tìm thấy ${matches.length} khoản phù hợp. ${title}` : "Mình chưa tìm thấy giao dịch phù hợp.",
-    cards: [{
-      type: "confirmation",
-      riskLevel: "low_confidence",
-      title,
-      actions: matches.slice(0, 4).map((item) => ({
-        label: `${item.label} - ${money(item.amount)}`,
-        actionType: "tool_call",
-        payload: { tool: "markExpenseException", arguments: { transactionId: item.id, exceptionType: "one_time" } }
-      }))
-    }]
+    assistantMessage: matches.length
+      ? `Mình tìm thấy ${matches.length} khoản phù hợp. ${title}`
+      : "Mình chưa tìm thấy giao dịch phù hợp.",
+    cards: [
+      {
+        type: "confirmation",
+        riskLevel: "low_confidence",
+        title,
+        actions: matches.slice(0, 4).map((item) => ({
+          label: `${item.label} - ${money(item.amount)}`,
+          actionType: "tool_call",
+          payload: {
+            tool: "markExpenseException",
+            arguments: { transactionId: item.id, exceptionType: "one_time" },
+          },
+        })),
+      },
+    ],
   };
 }
 
 function validateAmount(amount) {
-  if (!Number.isFinite(amount) || amount <= 0) throw new Error("invalid_amount");
+  if (!Number.isFinite(amount) || amount <= 0)
+    throw new Error("invalid_amount");
 }
 
 function normalize(text) {
-  return String(text).normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
+  return String(text)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase();
 }
 
 function todayIso() {
@@ -1049,10 +1522,47 @@ function categoryLabel(category) {
 }
 
 function riskText(risk) {
-  return risk === "safe" ? "An toàn" : risk === "warning" ? "Cảnh báo" : "Đã vượt";
+  return risk === "safe"
+    ? "An toàn"
+    : risk === "warning"
+      ? "Cảnh báo"
+      : "Đã vượt";
+}
+
+function getBudgetRiskStatus({
+  spent,
+  budget,
+  forecastEndOfMonth,
+  subject = "ngân sách",
+}) {
+  if (spent > budget) {
+    return {
+      riskLevel: "danger",
+      riskLabel: "Đã vượt ngân sách",
+      riskReason: `Bạn đã chi vượt ${subject}.`,
+    };
+  }
+  if (forecastEndOfMonth > budget) {
+    return {
+      riskLevel: "warning",
+      riskLabel: "Cảnh báo vượt ngân sách",
+      riskReason: `Dự báo cuối tháng vượt ${subject}, nhưng hiện tại bạn chưa vượt.`,
+    };
+  }
+  if (forecastEndOfMonth > budget * 0.9) {
+    return {
+      riskLevel: "warning",
+      riskLabel: "Sắp chạm ngân sách",
+      riskReason: `Dự báo cuối tháng sắp chạm ${subject}.`,
+    };
+  }
+  return {
+    riskLevel: "safe",
+    riskLabel: "An toàn",
+    riskReason: `Chi tiêu hiện tại vẫn trong ${subject}.`,
+  };
 }
 
 function money(value) {
   return `${Math.round(value).toLocaleString("vi-VN")}đ`;
 }
-
